@@ -560,18 +560,51 @@ const VistaProductos = ({
   recargarProductos: () => void;
 }) => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [productoEditando, setProductoEditando] = useState<number | null>(null);
 
   const [codigo, setCodigo] = useState('');
   const [nombre, setNombre] = useState('');
   const [precio, setPrecio] = useState('');
   const [stock, setStock] = useState('');
 
+  //Recarga el formulario
+  const iniciarEdicion = (prod: {
+    id: number;
+    codigo: string;
+    nombre: string;
+    precio: number;
+    stock: number;
+  }) => {
+    setProductoEditando(prod.id);
+    setCodigo(prod.codigo);
+    setNombre(prod.nombre);
+    setPrecio(String(prod.precio));
+    setStock(String(prod.stock));
+    setMostrarFormulario(true);
+  };
+  //Limpia el formulario y cierra la vista de edición
+  const cancelarFormulario = () => {
+    setMostrarFormulario(false);
+    setProductoEditando(null);
+    setCodigo('');
+    setNombre('');
+    setPrecio('');
+    setStock('');
+  };
+  //envio dinamico a POST vs PUT
+  //Es el controlador de evento onSubmit del formulario
   const manejarGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const url = productoEditando
+      ? `${API_URL}/api/productos/${productoEditando}`
+      : `${API_URL}/api/productos`;
+
+    const metodo = productoEditando ? 'PUT' : 'POST';
+
     try {
-      const respuesta = await fetch(`${API_URL}/api/productos`, {
-        method: 'POST',
+      const respuesta = await fetch(url, {
+        method: metodo,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           codigo,
@@ -582,12 +615,12 @@ const VistaProductos = ({
       });
 
       if (respuesta.ok) {
-        alert('Producto registrado exitosamente.');
-        setMostrarFormulario(false);
-        setCodigo('');
-        setNombre('');
-        setPrecio('');
-        setStock('');
+        alert(
+          productoEditando
+            ? 'Producto actualizado exitosamente.'
+            : 'Producto registrado exitosamente.'
+        );
+        cancelarFormulario();
         recargarProductos();
       } else {
         const datos = await respuesta.json();
@@ -601,10 +634,11 @@ const VistaProductos = ({
 
   return (
     <div>
+    
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-black text-slate-800">Listado de Artículos</h2>
         <button
-          onClick={() => setMostrarFormulario(!mostrarFormulario)}
+          onClick={() => (mostrarFormulario ? cancelarFormulario() : setMostrarFormulario(true))}
           className={`${
             mostrarFormulario ? 'bg-slate-500 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-700'
           } text-white px-4 py-2 rounded-lg text-sm font-bold shadow-xs transition`}
@@ -614,8 +648,14 @@ const VistaProductos = ({
       </div>
 
       {mostrarFormulario && (
-        <div className="bg-white p-6 rounded-xl shadow-sm mb-6 border-t-4 border-emerald-600">
-          <h3 className="text-lg font-bold mb-4 text-slate-800">Registrar Nuevo Producto</h3>
+        <div
+          className={`bg-white p-6 rounded-xl shadow-sm mb-6 border-t-4 ${
+            productoEditando ? 'border-amber-500' : 'border-emerald-600'
+          }`}
+        >
+          <h3 className="text-lg font-bold mb-4 text-slate-800">
+            {productoEditando ? 'Editar Producto' : 'Registrar Nuevo Producto'}
+          </h3>
           <form onSubmit={manejarGuardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Código</label>
@@ -668,9 +708,13 @@ const VistaProductos = ({
             <div className="sm:col-span-2 flex justify-end mt-2">
               <button
                 type="submit"
-                className="bg-emerald-600 text-white font-bold text-sm py-2.5 px-8 rounded-lg hover:bg-emerald-700 transition shadow-xs"
+                className={`${
+                  productoEditando
+                    ? 'bg-amber-500 hover:bg-amber-600'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                } text-white font-bold text-sm py-2.5 px-8 rounded-lg transition shadow-xs`}
               >
-                Guardar Producto
+                {productoEditando ? 'Actualizar Producto' : 'Guardar Producto'}
               </button>
             </div>
           </form>
@@ -685,6 +729,7 @@ const VistaProductos = ({
               <th className="p-3.5">Producto</th>
               <th className="p-3.5">Precio</th>
               <th className="p-3.5">Stock</th>
+              <th className="p-3.5 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -705,6 +750,15 @@ const VistaProductos = ({
                   >
                     {prod.stock} un.
                   </span>
+                </td>
+                <td className="p-3.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() => iniciarEdicion(prod)}
+                    className="bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg transition"
+                  >
+                    Editar
+                  </button>
                 </td>
               </tr>
             ))}

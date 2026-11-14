@@ -164,6 +164,33 @@ app.post("/api/productos", async (req, res) => {
   }
 });
 
+// RUTA 5B: Editar un producto existente
+app.put("/api/productos/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { codigo, nombre, precio, stock } = req.body;
+
+    if (!codigo || !nombre || precio === undefined || stock === undefined) {
+      return res.status(400).json({ error: "Faltan datos obligatorios." });
+    }
+
+    await db
+      .update(productos)
+      .set({
+        codigo,
+        nombre,
+        precio: Number(precio),
+        stock: Number(stock),
+      })
+      .where(eq(productos.id, id));
+
+    res.json({ mensaje: "Producto actualizado exitosamente." });
+  } catch (error) {
+    console.error("Error al actualizar el producto:", error);
+    res.status(500).json({ error: "Error interno del servidor al actualizar el producto." });
+  }
+});
+
 // RUTA 6: Listar y crear Usuarios
 app.get("/api/usuarios", async (req, res) => {
   try {
