@@ -1,20 +1,20 @@
 import express from "express";
 import cors from "cors";
-
-// Importamos jsonwebtoken para generar el "pase de seguridad" del usuario
 import jwt from "jsonwebtoken";
-
-// Importamos 'eq' de Drizzle. Esto sirve para decirle a la base de datos que busque valores exactos
-import { eq } from "drizzle-orm"; 
+import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
-import { productos, usuarios } from "./db/schema.js";
+import {
+  productos,
+  usuarios,
+  clientes,
+  ventas,
+  detallesVenta,
+  movimientosCtaCte,
+} from "./db/schema.js";
 
 const app = express();
-const PORT = 3000;
-
-// Esta es la llave secreta para crear los tokens. 
-// En un proyecto real esto se oculta, pero para el parcial lo dejamos acá.
-const SECRET_KEY = "clave_parcial_ventas"; 
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.JWT_SECRET || "clave_parcial_ventas";
 
 app.use(cors());
 app.use(express.json());
@@ -51,83 +51,109 @@ app.post("/api/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: usuario.id, rol: usuario.rol }, 
-      SECRET_KEY, 
+      { id: usuario.id, rol: usuario.rol },
+      SECRET_KEY,
       { expiresIn: "2h" }
     );
 
-    res.json({ 
-      mensaje: "Login exitoso.", 
+    res.json({
+      mensaje: "Login exitoso.",
       token: token,
-      usuario: { nombre: usuario.nombre, rol: usuario.rol }
+      usuario: { nombre: usuario.nombre, rol: usuario.rol },
     });
-
   } catch (error) {
     console.error("Error en el login:", error);
     res.status(500).json({ error: "Error interno del servidor." });
   }
 });
 
-// NUEVA RUTA 4: Procesar la venta y descontar stock
+// RUTA 4: Procesar la venta, descontar stock y registrar en Ventas / Cuenta Corriente
 app.post("/api/ventas", async (req, res) => {
   try {
-    // Recibimos los datos que React nos manda al presionar "Confirmar Venta"
-    const { cliente, formaPago, carrito, total } = req.body;
+    const { clienteId, formaPago, carrito, total } = req.body;
 
     if (!carrito || carrito.length === 0) {
       return res.status(400).json({ error: "El carrito está vacío." });
     }
 
-    // PASO 1: Descontar el stock de cada producto en la base de datos
-    // Recorremos el arreglo de productos vendidos uno por uno
-    for (const item of carrito) {
-      // Consultamos el stock actual del producto en SQLite
-      const productoDB = await db.select().from(productos).where(eq(productos.id, item.idProducto));
-      
-      if (productoDB.length > 0) {
-        const stockActual = productoDB[0].stock;
-        const nuevoStock = stockActual - item.cantidad;
+    if (formaPago === "cuenta_corriente" && !clienteId) {
+      return res.status(400).json({ error: "Debe seleccionar un cliente registrado para vender en Cuenta Corriente." });
+    }
 
-        // Validamos por seguridad en el backend que el stock no quede negativo
+    // PASO 1: Validar y descontar stock
+    for (const item of carrito) {
+      const productoDB = await db.select().from(productos).where(eq(productos.id, item.idProducto));
+
+      if (productoDB.length > 0) {
+        const nuevoStock = productoDB[0].stock - item.cantidad;
         if (nuevoStock < 0) {
           return res.status(400).json({ error: `Stock insuficiente para el producto: ${item.nombre}` });
         }
 
-        // Ejecutamos el UPDATE en SQLite para guardar la nueva cantidad
         await db.update(productos)
           .set({ stock: nuevoStock })
           .where(eq(productos.id, item.idProducto));
       }
     }
-    // PASO 2: (Opcional según tu schema) Insertar el registro en la tabla de ventas
-    // Si tenés una tabla "ventas" en schema.js, acá harías un db.insert(ventas).values(...)
 
-    // Le respondemos a React que la operación fue un éxito
-    res.json({ mensaje: "Venta confirmada y stock actualizado." });
+    // PASO 2: Guardar cabecera y detalles de la venta
+    const fechaActual = new Date().toISOString();
+    const numeroComprobante = `FC-${Date.now()}`;
 
+    const ventaInsertada = await db.insert(ventas).values({
+      numeroComprobante,
+      fecha: fechaActual,
+      clienteId: clienteId ? Number(clienteId) : null,
+      total: Number(total),
+      formaPago,
+    }).returning();
+
+    const ventaId = ventaInsertada[0].id;
+
+    for (const item of carrito) {
+      await db.insert(detallesVenta).values({
+        ventaId,
+        productoId: item.idProducto,
+        cantidad: item.cantidad,
+        precioUnitario: item.precio,
+        nombreProducto: item.nombre,
+        subtotal: item.subtotal,
+      });
+    }
+
+    // PASO 3: Si fue Cuenta Corriente, registrar el cargo (deuda) al cliente
+    if (formaPago === "cuenta_corriente" && clienteId) {
+      await db.insert(movimientosCtaCte).values({
+        clienteId: Number(clienteId),
+        fecha: fechaActual,
+        tipo: "cargo",
+        importe: Number(total),
+        observacion: `Venta ${numeroComprobante}`,
+        ventaId,
+      });
+    }
+
+    res.json({ mensaje: "Venta confirmada y stock actualizado.", comprobante: numeroComprobante });
   } catch (error) {
     console.error("Error al procesar la venta:", error);
     res.status(500).json({ error: "Error interno del servidor al procesar la venta." });
   }
 });
 
-// NUEVA RUTA 5: Crear un nuevo producto (Alta de inventario)
+// RUTA 5: Crear un nuevo producto (Alta de inventario)
 app.post("/api/productos", async (req, res) => {
   try {
-    // Extraemos los datos que nos manda el formulario de React
     const { codigo, nombre, precio, stock } = req.body;
 
-    // Pequeña validación de seguridad
     if (!codigo || !nombre || precio === undefined || stock === undefined) {
       return res.status(400).json({ error: "Faltan datos obligatorios." });
     }
 
-    // Insertamos el nuevo producto en la tabla de SQLite
     await db.insert(productos).values({
-      codigo: codigo,
-      nombre: nombre,
-      precio: precio,
-      stock: stock
+      codigo,
+      nombre,
+      precio,
+      stock,
     });
 
     res.json({ mensaje: "Producto registrado exitosamente." });
@@ -137,6 +163,102 @@ app.post("/api/productos", async (req, res) => {
   }
 });
 
+// RUTA 6: Listar y crear Usuarios
+app.get("/api/usuarios", async (req, res) => {
+  try {
+    const lista = await db.select({
+      id: usuarios.id,
+      nombre: usuarios.nombre,
+      email: usuarios.email,
+      rol: usuarios.rol,
+    }).from(usuarios);
+    res.json(lista);
+  } catch (error) {
+    res.status(500).json({ error: "Error al consultar usuarios." });
+  }
+});
+
+app.post("/api/usuarios", async (req, res) => {
+  try {
+    const { nombre, email, password, rol } = req.body;
+    if (!nombre || !email || !password) {
+      return res.status(400).json({ error: "Todos los campos son obligatorios." });
+    }
+    await db.insert(usuarios).values({ nombre, email, password, rol: rol || "vendedor" });
+    res.json({ mensaje: "Usuario registrado exitosamente." });
+  } catch (error) {
+    res.status(500).json({ error: "Error al registrar usuario (verifique que el email no esté duplicado)." });
+  }
+});
+
+// RUTA 7: Clientes y Saldo de Cuenta Corriente
+app.get("/api/clientes", async (req, res) => {
+  try {
+    const listaClientes = await db.select().from(clientes);
+    const todosMovimientos = await db.select().from(movimientosCtaCte);
+
+    // Calculamos el saldo actual de cada cliente (cargos - abonos)
+    const clientesConSaldo = listaClientes.map((cli) => {
+      const movs = todosMovimientos.filter((m) => m.clienteId === cli.id);
+      const saldo = movs.reduce((acc, m) => (m.tipo === "cargo" ? acc + m.importe : acc - m.importe), 0);
+      return { ...cli, saldo };
+    });
+
+    res.json(clientesConSaldo);
+  } catch (error) {
+    res.status(500).json({ error: "Error al consultar clientes." });
+  }
+});
+
+app.post("/api/clientes", async (req, res) => {
+  try {
+    const { razonSocial, documento, contacto } = req.body;
+    if (!razonSocial || !documento) {
+      return res.status(400).json({ error: "Razón social y documento son obligatorios." });
+    }
+    await db.insert(clientes).values({ razonSocial, documento, contacto });
+    res.json({ mensaje: "Cliente registrado exitosamente." });
+  } catch (error) {
+    res.status(500).json({ error: "Error al registrar cliente (verifique que el documento no exista)." });
+  }
+});
+
+// RUTA 8: Consultar movimientos y registrar pagos (abonos) en Cuenta Corriente
+app.get("/api/clientes/:id/movimientos", async (req, res) => {
+  try {
+    const clienteId = Number(req.params.id);
+    const movimientos = await db
+      .select()
+      .from(movimientosCtaCte)
+      .where(eq(movimientosCtaCte.clienteId, clienteId));
+    res.json(movimientos);
+  } catch (error) {
+    res.status(500).json({ error: "Error al obtener movimientos de cuenta corriente." });
+  }
+});
+
+app.post("/api/clientes/:id/pagos", async (req, res) => {
+  try {
+    const clienteId = Number(req.params.id);
+    const { importe, observacion } = req.body;
+
+    if (!importe || Number(importe) <= 0) {
+      return res.status(400).json({ error: "El importe del pago debe ser mayor a 0." });
+    }
+
+    await db.insert(movimientosCtaCte).values({
+      clienteId,
+      fecha: new Date().toISOString(),
+      tipo: "abono",
+      importe: Number(importe),
+      observacion: observacion || "Pago recibido en caja",
+    });
+
+    res.json({ mensaje: "Pago registrado correctamente." });
+  } catch (error) {
+    res.status(500).json({ error: "Error al registrar el pago." });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
