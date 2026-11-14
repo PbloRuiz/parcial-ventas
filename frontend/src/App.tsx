@@ -983,13 +983,16 @@ const VistaUsuarios = () => {
 };
 
 
+// ============================================================================
 // 3. COMPONENTE PRINCIPAL (CEREBRO Y NAVEGACIÓN DE LA APLICACIÓN)
-
+// ============================================================================
 function App() {
   // Estados del formulario de Login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mensaje, setMensaje] = useState('');
+  const [mostrarPassword, setMostrarPassword] = useState(false); // Controla el ojo de ver/ocultar clave
+  const [cargando, setCargando] = useState(false); // Muestra animación mientras responde el servidor
 
   // Estados globales de sesión y datos maestros compartidos entre vistas
   const [estaLogueado, setEstaLogueado] = useState(false);
@@ -1025,6 +1028,8 @@ function App() {
   // Valida credenciales contra /api/login, guarda el token JWT y carga los datos iniciales
   const manejarLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMensaje('');
+    setCargando(true); // Activamos el estado de carga en el botón
 
     try {
       const respuesta = await fetch(`${API_URL}/api/login`, {
@@ -1046,7 +1051,9 @@ function App() {
       }
     } catch (error) {
       console.error(error);
-      setMensaje('Error al conectar con el servidor.');
+      setMensaje('No se pudo conectar con el servidor. Verificá que esté encendido.');
+    } finally {
+      setCargando(false); // Desactivamos el estado de carga pase lo que pase
     }
   };
 
@@ -1057,13 +1064,14 @@ function App() {
     setEmail('');
     setPassword('');
     setMensaje('');
+    setMostrarPassword(false);
   };
 
-  
+  // --------------------------------------------------------------------------
   // RENDERIZADO CONDICIONAL:
   // Si el usuario inició sesión -> Muestra el panel con menú lateral y vistas.
-  // Si NO inició sesión -> Muestra únicamente la tarjeta de Login.
-  
+  // Si NO inició sesión -> Muestra la pantalla de Login.
+  // --------------------------------------------------------------------------
   if (estaLogueado) {
     return (
       <div className="min-h-screen bg-gray-100 flex">
@@ -1146,54 +1154,168 @@ function App() {
     );
   }
 
-  // PANTALLA DE LOGIN (Cuando estaLogueado es false)
+     // PANTALLA DE LOGIN MEJORADA (Cuando estaLogueado es false)
   return (
-    <div className="min-h-screen bg-gray-200 flex items-center justify-center">
-      <div className="bg-white p-8 rounded-lg shadow-xl w-96 border-t-4 border-blue-600">
+    <div
+      className="h-screen w-full overflow-hidden bg-cover bg-bottom lg:bg-[length:100%_100%] bg-no-repeat flex items-center justify-center p-4"
+      style={{ backgroundImage: "url('/fondoo-login.png')" }}
+    >
+      <div className="bg-white/95 backdrop-blur-xs p-8 sm:p-10 rounded-2xl shadow-[0_20px_50px_rgba(37,99,235,0.18)] w-full max-w-md border border-blue-100">
+
+        {/* Cabecera con ícono de marca y título */}
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-black text-gray-800">Ingreso</h1>
-          <p className="text-gray-500 text-sm mt-2">Sistema de Gestión Comercial</p>
+          <div className="mx-auto w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/30 mb-4">
+            <svg
+              className="w-8 h-8 text-white"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-black text-slate-800 tracking-tight">
+            Bienvenido al Sistema
+          </h1>
+          <p className="text-slate-500 text-sm mt-1">
+            Gestión Comercial, Stock y Cuentas Corrientes
+          </p>
         </div>
 
+        {/* Formulario conectado a la función manejarLogin */}
         <form onSubmit={manejarLogin} className="flex flex-col gap-5">
+          {/* Campo Correo Electrónico con ícono */}
           <div>
-            <label className="block text-gray-700 text-sm font-bold mb-2">
+            <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">
               Correo Electrónico
             </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-              placeholder="admin@ventas.com"
-              required
-            />
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              </span>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
+                placeholder="admin@ventas.com"
+                required
+              />
+            </div>
           </div>
+
+          {/* Campo Contraseña con candado y botón de mostrar/ocultar */}
           <div>
-            <label className="block text-gray-700 text-sm font-bold mb-2">Contraseña</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-              placeholder="clave"
-              required
-            />
+            <label className="block text-slate-700 text-xs font-bold uppercase tracking-wider mb-2">
+              Contraseña
+            </label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+              </span>
+              <input
+                type={mostrarPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full pl-11 pr-12 py-3 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
+                placeholder="••••••••"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarPassword(!mostrarPassword)}
+                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                title={mostrarPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+              >
+                {mostrarPassword ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                    />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
+
+          {/* Botón de envío con spinner de carga */}
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded hover:bg-blue-700 hover:shadow-lg transition-all mt-2"
+            disabled={cargando}
+            className={`w-full font-bold py-3 px-4 rounded-lg text-white shadow-lg transition-all mt-1 flex items-center justify-center gap-2 ${
+              cargando
+                ? 'bg-blue-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-600/30 active:scale-[0.99]'
+            }`}
           >
-            Ingresar al Sistema
+            {cargando ? (
+              <>
+                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+                <span>Verificando acceso...</span>
+              </>
+            ) : (
+              <span>Ingresar al Sistema</span>
+            )}
           </button>
         </form>
 
         {/* Cartel rojo de alerta si falla el usuario o contraseña */}
         {mensaje && (
-          <div className="mt-6 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 text-sm font-medium">
-            {mensaje}
+          <div className="mt-5 p-3.5 bg-red-50 border border-red-200 border-l-4 border-l-red-600 text-red-700 text-sm rounded-r-lg flex items-center gap-2.5">
+            <svg className="w-5 h-5 text-red-600 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <span>{mensaje}</span>
           </div>
         )}
+
+        {/* Pie informativo */}
+        <p className="text-center text-xs text-slate-400 mt-8 pt-4 border-t border-slate-100">
+          Acceso exclusivo para operadores y administradores
+        </p>
       </div>
     </div>
   );
