@@ -5,6 +5,14 @@ import { useState, useEffect } from 'react';
 // Si estás trabajando en tu computadora, usa automáticamente http://localhost:3000.
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
+const apiFetch = (url: string, options: RequestInit = {}) =>
+  fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${localStorage.getItem('token')}`,
+    },
+  });
 
 // 1. DEFINICIÓN DE TIPOS (TypeScript)
 // Son los "moldes" que le explican a React qué forma exacta tienen los datos
@@ -64,6 +72,17 @@ interface Usuario {
   nombre: string;
   email: string;
   rol: string;
+}
+
+// Molde para cada fila del historial de ventas (cabecera de la factura + nombre del cliente)
+interface VentaHistorial {
+  id: number;
+  numeroComprobante: string;
+  fecha: string;
+  total: number;
+  formaPago: string;
+  anulada: boolean;
+  cliente: string;
 }
 
 
@@ -165,7 +184,7 @@ const VistaVentas = ({
 
     setProcesando(true);
     try {
-      const respuesta = await fetch(`${API_URL}/api/ventas`, {
+      const respuesta = await apiFetch(`${API_URL}/api/ventas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -603,7 +622,7 @@ const VistaProductos = ({
     const metodo = productoEditando ? 'PUT' : 'POST';
 
     try {
-      const respuesta = await fetch(url, {
+      const respuesta = await apiFetch(url, {
         method: metodo,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -791,7 +810,7 @@ const VistaClientes = ({
   const manejarGuardarCliente = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const respuesta = await fetch(`${API_URL}/api/clientes`, {
+      const respuesta = await apiFetch(`${API_URL}/api/clientes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ razonSocial, documento, contacto }),
@@ -816,7 +835,7 @@ const VistaClientes = ({
   const abrirDetalleCuenta = async (cli: Cliente) => {
     setClienteDetalle(cli);
     try {
-      const resp = await fetch(`${API_URL}/api/clientes/${cli.id}/movimientos`);
+      const resp = await apiFetch(`${API_URL}/api/clientes/${cli.id}/movimientos`);
       const datos = await resp.json();
       setMovimientos(datos);
     } catch {
@@ -829,7 +848,7 @@ const VistaClientes = ({
     if (!clienteDetalle) return;
 
     try {
-      const resp = await fetch(`${API_URL}/api/clientes/${clienteDetalle.id}/pagos`, {
+      const resp = await apiFetch(`${API_URL}/api/clientes/${clienteDetalle.id}/pagos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -843,7 +862,7 @@ const VistaClientes = ({
         setImportePago('');
         setObservacionPago('');
         recargarClientes();
-        const respMovs = await fetch(`${API_URL}/api/clientes/${clienteDetalle.id}/movimientos`);
+        const respMovs = await apiFetch(`${API_URL}/api/clientes/${clienteDetalle.id}/movimientos`);
         const datosMovs = await respMovs.json();
         setMovimientos(datosMovs);
       } else {
@@ -1084,49 +1103,105 @@ const VistaClientes = ({
 };
 
 
-// VISTA 4: PANTALLA DE USUARIOS DEL SISTEMA
+// VISTA 4: PANTALLA DE USUARIOS DEL SISTEMA (con botones Editar y Eliminar)
 const VistaUsuarios = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  // Guarda el id del usuario que se está editando (null = se está creando uno nuevo)
+  const [usuarioEditando, setUsuarioEditando] = useState<number | null>(null);
 
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rol, setRol] = useState('vendedor');
 
+  // Al cambiar este número, el efecto vuelve a pedir la lista de usuarios
+  const [recarga, setRecarga] = useState(0);
+  const cargarUsuarios = () => setRecarga((n) => n + 1);
+
   useEffect(() => {
     const obtenerUsuarios = async () => {
       try {
-        const respuesta = await fetch(`${API_URL}/api/usuarios`);
+        const respuesta = await apiFetch(`${API_URL}/api/usuarios`);
         const datos = await respuesta.json();
-        setUsuarios(datos);
+        if (Array.isArray(datos)) setUsuarios(datos);
       } catch {
         console.error('Error al obtener usuarios');
       }
     };
     obtenerUsuarios();
-  }, []);
+  }, [recarga]);
 
+  // Carga los datos del usuario en el formulario (la contraseña queda vacía)
+  const iniciarEdicion = (user: Usuario) => {
+    setUsuarioEditando(user.id);
+    setNombre(user.nombre);
+    setEmail(user.email);
+    setPassword('');
+    setRol(user.rol);
+    setMostrarFormulario(true);
+  };
+
+  // Limpia el formulario y lo cierra
+  const cancelarFormulario = () => {
+    setMostrarFormulario(false);
+    setUsuarioEditando(null);
+    setNombre('');
+    setEmail('');
+    setPassword('');
+    setRol('vendedor');
+  };
+
+  // Crea (POST) o edita (PUT) según si hay un usuario en edición
   const manejarGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const url = usuarioEditando
+      ? `${API_URL}/api/usuarios/${usuarioEditando}`
+      : `${API_URL}/api/usuarios`;
+    const metodo = usuarioEditando ? 'PUT' : 'POST';
+
+    // Al editar, la contraseña es opcional: si está vacía, no se envía y no se cambia
+    const cuerpo: Record<string, string> = { nombre, email, rol };
+    if (!usuarioEditando || password) cuerpo.password = password;
+
     try {
-      const respuesta = await fetch(`${API_URL}/api/usuarios`, {
-        method: 'POST',
+      const respuesta = await apiFetch(url, {
+        method: metodo,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre, email, password, rol }),
+        body: JSON.stringify(cuerpo),
       });
 
       if (respuesta.ok) {
-        alert('Usuario registrado exitosamente.');
-        setMostrarFormulario(false);
-        setNombre('');
-        setEmail('');
-        setPassword('');
-        setRol('vendedor');
+        alert(
+          usuarioEditando
+            ? 'Usuario actualizado exitosamente.'
+            : 'Usuario registrado exitosamente.'
+        );
+        cancelarFormulario();
+        cargarUsuarios();
+      } else {
+        const datos = await respuesta.json();
+        alert(`Error: ${datos.error}`);
+      }
+    } catch {
+      alert('Error de conexión con el servidor.');
+    }
+  };
 
-        const resp = await fetch(`${API_URL}/api/usuarios`);
-        const datos = await resp.json();
-        setUsuarios(datos);
+  // Elimina un usuario, pidiendo confirmación antes
+  const eliminarUsuario = async (user: Usuario) => {
+    if (!window.confirm(`¿Eliminar a ${user.nombre}? Esta acción no se puede deshacer.`)) return;
+
+    try {
+      const respuesta = await apiFetch(`${API_URL}/api/usuarios/${user.id}`, {
+        method: 'DELETE',
+      });
+
+      if (respuesta.ok) {
+        alert('Usuario eliminado.');
+        if (usuarioEditando === user.id) cancelarFormulario();
+        cargarUsuarios();
       } else {
         const datos = await respuesta.json();
         alert(`Error: ${datos.error}`);
@@ -1141,7 +1216,7 @@ const VistaUsuarios = () => {
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-black text-slate-800">Operadores Habilitados</h2>
         <button
-          onClick={() => setMostrarFormulario(!mostrarFormulario)}
+          onClick={() => (mostrarFormulario ? cancelarFormulario() : setMostrarFormulario(true))}
           className={`${
             mostrarFormulario ? 'bg-slate-500 hover:bg-slate-600' : 'bg-blue-600 hover:bg-blue-700'
           } text-white px-4 py-2 rounded-lg text-sm font-bold shadow-xs transition`}
@@ -1151,8 +1226,14 @@ const VistaUsuarios = () => {
       </div>
 
       {mostrarFormulario && (
-        <div className="bg-white p-6 rounded-xl shadow-sm mb-6 border-t-4 border-blue-600">
-          <h3 className="text-lg font-bold mb-4 text-slate-800">Registrar Nuevo Acceso</h3>
+        <div
+          className={`bg-white p-6 rounded-xl shadow-sm mb-6 border-t-4 ${
+            usuarioEditando ? 'border-amber-500' : 'border-blue-600'
+          }`}
+        >
+          <h3 className="text-lg font-bold mb-4 text-slate-800">
+            {usuarioEditando ? 'Editar Usuario' : 'Registrar Nuevo Acceso'}
+          </h3>
           <form onSubmit={manejarGuardar} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Nombre Completo</label>
@@ -1175,13 +1256,16 @@ const VistaUsuarios = () => {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Contraseña</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                {usuarioEditando ? 'Contraseña nueva (opcional)' : 'Contraseña'}
+              </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                required
+                required={!usuarioEditando}
+                placeholder={usuarioEditando ? 'Dejar vacía para no cambiarla' : ''}
               />
             </div>
             <div>
@@ -1198,9 +1282,11 @@ const VistaUsuarios = () => {
             <div className="sm:col-span-2 flex justify-end mt-2">
               <button
                 type="submit"
-                className="bg-blue-600 text-white font-bold text-sm py-2.5 px-8 rounded-lg hover:bg-blue-700 transition shadow-xs"
+                className={`${
+                  usuarioEditando ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-600 hover:bg-blue-700'
+                } text-white font-bold text-sm py-2.5 px-8 rounded-lg transition shadow-xs`}
               >
-                Guardar Usuario
+                {usuarioEditando ? 'Actualizar Usuario' : 'Guardar Usuario'}
               </button>
             </div>
           </form>
@@ -1214,6 +1300,7 @@ const VistaUsuarios = () => {
               <th className="p-3.5">Nombre</th>
               <th className="p-3.5">Email</th>
               <th className="p-3.5">Rol</th>
+              <th className="p-3.5 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -1232,8 +1319,156 @@ const VistaUsuarios = () => {
                     {user.rol.toUpperCase()}
                   </span>
                 </td>
+                <td className="p-3.5 text-right space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => iniciarEdicion(user)}
+                    className="bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg transition"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => eliminarUsuario(user)}
+                    className="bg-red-100 hover:bg-red-200 text-red-700 font-bold text-xs px-3 py-1.5 rounded-lg transition"
+                  >
+                    Eliminar
+                  </button>
+                </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+
+// VISTA 5: HISTORIAL DE VENTAS (solo administradores) + ANULACIÓN DE FACTURAS
+const VistaHistorial = ({
+  recargarProductos,
+  recargarClientes,
+}: {
+  recargarProductos: () => void;
+  recargarClientes: () => void;
+}) => {
+  const [ventas, setVentas] = useState<VentaHistorial[]>([]);
+
+  // Al cambiar este número, el efecto vuelve a pedir la lista de ventas
+  const [recarga, setRecarga] = useState(0);
+  const cargarVentas = () => setRecarga((n) => n + 1);
+
+  useEffect(() => {
+    const obtenerVentas = async () => {
+      try {
+        const respuesta = await apiFetch(`${API_URL}/api/ventas`);
+        const datos = await respuesta.json();
+        if (Array.isArray(datos)) setVentas(datos);
+      } catch {
+        console.error('Error al obtener ventas');
+      }
+    };
+    obtenerVentas();
+  }, [recarga]);
+
+  const etiquetaFormaPago: Record<string, string> = {
+    contado: 'Contado / Efectivo',
+    tarjeta: 'Tarjeta',
+    cuenta_corriente: 'Cuenta Corriente',
+  };
+
+  // Anula la venta: el servidor devuelve el stock y compensa la deuda (no borra nada)
+  const anularVenta = async (venta: VentaHistorial) => {
+    if (
+      !window.confirm(
+        `¿Anular la factura ${venta.numeroComprobante}? Se devuelve el stock y, si era cuenta corriente, se compensa la deuda.`
+      )
+    )
+      return;
+
+    try {
+      const respuesta = await apiFetch(`${API_URL}/api/ventas/${venta.id}/anular`, {
+        method: 'POST',
+      });
+
+      if (respuesta.ok) {
+        alert('Venta anulada correctamente.');
+        cargarVentas();
+        recargarProductos();
+        recargarClientes();
+      } else {
+        const datos = await respuesta.json();
+        alert(`Error: ${datos.error}`);
+      }
+    } catch {
+      alert('Error de conexión con el servidor.');
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-black text-slate-800">Facturas Emitidas</h2>
+        <button
+          onClick={cargarVentas}
+          className="bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 font-bold text-xs px-4 py-2 rounded-lg shadow-xs transition"
+        >
+          Actualizar
+        </button>
+      </div>
+
+      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-slate-200/80">
+        <table className="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr className="bg-slate-800 text-white text-xs uppercase">
+              <th className="p-3.5">N° Factura</th>
+              <th className="p-3.5">Fecha</th>
+              <th className="p-3.5">Cliente</th>
+              <th className="p-3.5">Pago</th>
+              <th className="p-3.5 text-right">Total</th>
+              <th className="p-3.5 text-center">Estado</th>
+              <th className="p-3.5 text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {ventas.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-slate-400">
+                  Todavía no hay ventas registradas.
+                </td>
+              </tr>
+            ) : (
+              ventas.map((v) => (
+                <tr key={v.id} className={v.anulada ? 'bg-slate-50 text-slate-400' : 'hover:bg-slate-50'}>
+                  <td className="p-3.5 font-mono text-xs font-bold">{v.numeroComprobante}</td>
+                  <td className="p-3.5">{new Date(v.fecha).toLocaleString('es-AR')}</td>
+                  <td className="p-3.5 font-medium">{v.cliente}</td>
+                  <td className="p-3.5">{etiquetaFormaPago[v.formaPago] || v.formaPago}</td>
+                  <td className="p-3.5 text-right font-bold">${v.total.toLocaleString('es-AR')}</td>
+                  <td className="p-3.5 text-center">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                        v.anulada ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                      }`}
+                    >
+                      {v.anulada ? 'ANULADA' : 'VÁLIDA'}
+                    </span>
+                  </td>
+                  <td className="p-3.5 text-right">
+                    {!v.anulada && (
+                      <button
+                        type="button"
+                        onClick={() => anularVenta(v)}
+                        className="bg-red-100 hover:bg-red-200 text-red-700 font-bold text-xs px-3 py-1.5 rounded-lg transition"
+                      >
+                        Anular
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -1254,6 +1489,9 @@ function App() {
 
   const [estaLogueado, setEstaLogueado] = useState(false);
   const [nombreUsuario, setNombreUsuario] = useState('');
+  // Rol del usuario que inició sesión ('admin' o 'vendedor'): define qué pantallas ve
+  const [rolUsuario, setRolUsuario] = useState('');
+  const esAdmin = rolUsuario === 'admin';
   const [productos, setProductos] = useState<Producto[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
 
@@ -1261,9 +1499,9 @@ function App() {
 
   const obtenerProductos = async () => {
     try {
-      const respuesta = await fetch(`${API_URL}/api/productos`);
+      const respuesta = await apiFetch(`${API_URL}/api/productos`);
       const datos = await respuesta.json();
-      setProductos(datos);
+      if (Array.isArray(datos)) setProductos(datos);
     } catch (error) {
       console.error('Error al cargar productos:', error);
     }
@@ -1271,9 +1509,9 @@ function App() {
 
   const obtenerClientes = async () => {
     try {
-      const respuesta = await fetch(`${API_URL}/api/clientes`);
+      const respuesta = await apiFetch(`${API_URL}/api/clientes`);
       const datos = await respuesta.json();
-      setClientes(datos);
+      if (Array.isArray(datos)) setClientes(datos);
     } catch (error) {
       console.error('Error al cargar clientes:', error);
     }
@@ -1295,6 +1533,8 @@ function App() {
       if (respuesta.ok) {
         localStorage.setItem('token', datos.token);
         setNombreUsuario(datos.usuario.nombre);
+        setRolUsuario(datos.usuario.rol);
+        setVistaActual(datos.usuario.rol === 'admin' ? 'productos' : 'ventas');
         setEstaLogueado(true);
         obtenerProductos();
         obtenerClientes();
@@ -1312,6 +1552,8 @@ function App() {
   const cerrarSesion = () => {
     localStorage.removeItem('token');
     setEstaLogueado(false);
+    setRolUsuario('');
+    setVistaActual('productos');
     setEmail('');
     setPassword('');
     setMensaje('');
@@ -1334,6 +1576,10 @@ function App() {
     clientes: {
       titulo: 'Cartera de Clientes y Cuentas Corrientes',
       subtitulo: 'Control de saldos deudores, historial de movimientos y cobranzas',
+    },
+    historial: {
+      titulo: 'Historial de Ventas',
+      subtitulo: 'Facturas emitidas, estado y anulación con devolución de stock',
     },
     usuarios: {
       titulo: 'Control de Accesos',
@@ -1372,6 +1618,7 @@ function App() {
             </div>
 
             <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+              {/* Ventas / Caja: lo ven todos los usuarios */}
               <button
                 onClick={() => setVistaActual('ventas')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
@@ -1386,58 +1633,84 @@ function App() {
                 <span>Ventas / Caja</span>
               </button>
 
-              <button
-                onClick={() => setVistaActual('productos')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                  vistaActual === 'productos'
-                    ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                    : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-                <span>Productos y Stock</span>
-                {stockBajoCount > 0 && (
-                  <span
-                    className={`text-xs font-black px-1.5 py-0.2 rounded-full ${
-                      vistaActual === 'productos'
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {stockBajoCount}
-                  </span>
-                )}
-              </button>
+              {/* Productos y Stock: solo administradores */}
+              {esAdmin && (
+                <button
+                  onClick={() => setVistaActual('productos')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
+                    vistaActual === 'productos'
+                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
+                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  <span>Productos y Stock</span>
+                  {stockBajoCount > 0 && (
+                    <span
+                      className={`text-xs font-black px-1.5 py-0.2 rounded-full ${
+                        vistaActual === 'productos'
+                          ? 'bg-amber-400 text-slate-950'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {stockBajoCount}
+                    </span>
+                  )}
+                </button>
+              )}
 
-              <button
-                onClick={() => setVistaActual('clientes')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                  vistaActual === 'clientes'
-                    ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                    : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span>Clientes y Cuentas</span>
-              </button>
+              {/* Clientes y Cuentas: solo administradores */}
+              {esAdmin && (
+                <button
+                  onClick={() => setVistaActual('clientes')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
+                    vistaActual === 'clientes'
+                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
+                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span>Clientes y Cuentas</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => setVistaActual('usuarios')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                  vistaActual === 'usuarios'
-                    ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                    : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                <span>Usuarios</span>
-              </button>
+              {/* Historial de ventas: solo administradores */}
+              {esAdmin && (
+                <button
+                  onClick={() => setVistaActual('historial')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
+                    vistaActual === 'historial'
+                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
+                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span>Historial de Ventas</span>
+                </button>
+              )}
+
+              {/* Usuarios: solo administradores */}
+              {esAdmin && (
+                <button
+                  onClick={() => setVistaActual('usuarios')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
+                    vistaActual === 'usuarios'
+                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
+                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span>Usuarios</span>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
@@ -1488,7 +1761,7 @@ function App() {
                 })}
               </span>
 
-              {vistaActual !== 'ventas' && (
+              {esAdmin && vistaActual !== 'ventas' && (
                 <button
                   onClick={() => setVistaActual('ventas')}
                   className="bg-white text-blue-900 hover:bg-blue-50 text-xs font-black px-4 py-2 rounded-lg shadow-md transition"
@@ -1502,6 +1775,7 @@ function App() {
 
         {/* CONTENIDO PRINCIPAL CON TARJETAS KPI FLOTANTES */}
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 -mt-12 pb-12">
+          {esAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
             <div className="bg-white p-5 rounded-xl shadow-md shadow-slate-900/5 border border-slate-200/80 flex items-center justify-between">
               <div>
@@ -1564,6 +1838,7 @@ function App() {
               </div>
             </div>
           </div>
+          )}
 
           {vistaActual === 'ventas' && (
             <VistaVentas
@@ -1574,15 +1849,19 @@ function App() {
             />
           )}
 
-          {vistaActual === 'productos' && (
+          {esAdmin && vistaActual === 'productos' && (
             <VistaProductos productos={productos} recargarProductos={obtenerProductos} />
           )}
 
-          {vistaActual === 'clientes' && (
+          {esAdmin && vistaActual === 'clientes' && (
             <VistaClientes clientes={clientes} recargarClientes={obtenerClientes} />
           )}
 
-          {vistaActual === 'usuarios' && <VistaUsuarios />}
+          {esAdmin && vistaActual === 'historial' && (
+            <VistaHistorial recargarProductos={obtenerProductos} recargarClientes={obtenerClientes} />
+          )}
+
+          {esAdmin && vistaActual === 'usuarios' && <VistaUsuarios />}
         </main>
       </div>
     );
