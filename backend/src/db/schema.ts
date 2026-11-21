@@ -27,6 +27,7 @@ export const productos = sqliteTable("productos", {
   nombre: text("nombre").notNull(),
   precio: real("precio").notNull(),
   stock: integer("stock").notNull().default(0),
+ //--
   activo: integer("activo", { mode: "boolean" }).notNull().default(true),
 });
 
@@ -46,6 +47,7 @@ export const ventas = sqliteTable("ventas", {
   clienteId: integer("cliente_id").references(() => clientes.id),
   total: real("total").notNull(),
   formaPago: text("forma_pago").notNull(),
+  anulada: integer("anulada", { mode: "boolean" }).default(false),
 });
 
 export const detallesVenta = sqliteTable("detalles_venta", {
