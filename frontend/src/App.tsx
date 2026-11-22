@@ -14,6 +14,11 @@ const apiFetch = (url: string, options: RequestInit = {}) =>
     },
   });
 
+// CUENTAS DE DEMOSTRACIÓN: permiten entrar con un clic desde el login.
+// Son usuarios creados solo para la demo (no son los usuarios reales del sistema).
+const DEMO_ADMIN = { email: 'demo.admin@ventas.com', password: 'demo1234' };
+const DEMO_VENDEDOR = { email: 'demo.vendedor@ventas.com', password: 'demo1234' };
+
 // 1. DEFINICIÓN DE TIPOS (TypeScript)
 // Son los "moldes" que le explican a React qué forma exacta tienen los datos
 // que viajan desde y hacia la base de datos SQLite.
@@ -1517,8 +1522,8 @@ function App() {
     }
   };
 
-  const manejarLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Inicia sesión con el email y la contraseña recibidos (lo usan el formulario y los botones demo)
+  const iniciarSesion = async (emailIngresado: string, passwordIngresada: string) => {
     setMensaje('');
     setCargando(true);
 
@@ -1526,7 +1531,7 @@ function App() {
       const respuesta = await fetch(`${API_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: emailIngresado, password: passwordIngresada }),
       });
       const datos = await respuesta.json();
 
@@ -1547,6 +1552,12 @@ function App() {
     } finally {
       setCargando(false);
     }
+  };
+
+  // Controlador del formulario de login
+  const manejarLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    iniciarSesion(email, password);
   };
 
   const cerrarSesion = () => {
@@ -2019,6 +2030,35 @@ function App() {
             <span>{mensaje}</span>
           </div>
         )}
+
+        {/* ACCESO RÁPIDO DE DEMOSTRACIÓN */}
+        <div className="mt-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex-1 h-px bg-slate-200"></div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Acceso demo
+            </span>
+            <div className="flex-1 h-px bg-slate-200"></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={cargando}
+              onClick={() => iniciarSesion(DEMO_ADMIN.email, DEMO_ADMIN.password)}
+              className="py-2.5 px-3 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition shadow-xs"
+            >
+              Demo Administrador
+            </button>
+            <button
+              type="button"
+              disabled={cargando}
+              onClick={() => iniciarSesion(DEMO_VENDEDOR.email, DEMO_VENDEDOR.password)}
+              className="py-2.5 px-3 rounded-lg text-sm font-bold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 disabled:opacity-60 disabled:cursor-not-allowed transition shadow-xs"
+            >
+              Demo Vendedor
+            </button>
+          </div>
+        </div>
 
         <p className="text-center text-xs text-slate-400 mt-8 pt-4 border-t border-slate-100">
           Acceso exclusivo para operadores y administradores
