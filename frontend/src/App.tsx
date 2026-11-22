@@ -59,6 +59,7 @@ interface Cliente {
   documento: string;
   contacto: string | null;
   saldo: number;
+  limiteCredito: number; // tope de deuda en cuenta corriente (0 = sin límite)
 }
 
 // Molde para cada movimiento de la Cuenta Corriente ("cargo" = deuda por venta, "abono" = pago recibido)
@@ -77,6 +78,7 @@ interface Usuario {
   nombre: string;
   email: string;
   rol: string;
+  activo?: boolean; // true = puede iniciar sesión, false = desactivado
 }
 
 // Molde para cada fila del historial de ventas (cabecera de la factura + nombre del cliente)
@@ -579,9 +581,11 @@ const VistaVentas = ({
 const VistaProductos = ({
   productos,
   recargarProductos,
+  cargando,
 }: {
   productos: Producto[];
   recargarProductos: () => void;
+  cargando: boolean; // true mientras se piden los productos al servidor
 }) => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [productoEditando, setProductoEditando] = useState<number | null>(null);
@@ -757,6 +761,14 @@ const VistaProductos = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
+            {/* Cartel de carga: solo mientras no llegó ningún producto */}
+            {cargando && productos.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-slate-400">
+                  Cargando productos...
+                </td>
+              </tr>
+            )}
             {productos.map((prod) => (
               <tr key={prod.id} className="hover:bg-slate-50">
                 <td className="p-3.5 font-mono text-xs font-bold text-slate-600">{prod.codigo}</td>
@@ -798,14 +810,17 @@ const VistaProductos = ({
 const VistaClientes = ({
   clientes,
   recargarClientes,
+  cargando,
 }: {
   clientes: Cliente[];
   recargarClientes: () => void;
+  cargando: boolean; // true mientras se piden los clientes al servidor
 }) => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [razonSocial, setRazonSocial] = useState('');
   const [documento, setDocumento] = useState('');
   const [contacto, setContacto] = useState('');
+  const [limiteCredito, setLimiteCredito] = useState(''); // vacío o 0 = sin límite
 
   const [clienteDetalle, setClienteDetalle] = useState<Cliente | null>(null);
   const [movimientos, setMovimientos] = useState<MovimientoCtaCte[]>([]);
@@ -818,7 +833,7 @@ const VistaClientes = ({
       const respuesta = await apiFetch(`${API_URL}/api/clientes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ razonSocial, documento, contacto }),
+        body: JSON.stringify({ razonSocial, documento, contacto, limiteCredito: Number(limiteCredito) || 0 }),
       });
 
       if (respuesta.ok) {
@@ -827,6 +842,36 @@ const VistaClientes = ({
         setRazonSocial('');
         setDocumento('');
         setContacto('');
+        setLimiteCredito('');
+        recargarClientes();
+      } else {
+        const datos = await respuesta.json();
+        alert(`Error: ${datos.error}`);
+      }
+    } catch {
+      alert('Error de conexión con el servidor.');
+    }
+  };
+
+  // Cambia el límite de crédito de un cliente (0 = sin límite)
+  const cambiarLimite = async (cli: Cliente) => {
+    const texto = window.prompt(
+      `Nuevo límite de crédito para ${cli.razonSocial} (0 = sin límite):`,
+      String(cli.limiteCredito ?? 0)
+    );
+    if (texto === null) return; // tocó "Cancelar"
+
+    const valor = Number(texto);
+    if (!(valor >= 0)) return alert('Ingresá un número mayor o igual a 0.');
+
+    try {
+      const respuesta = await apiFetch(`${API_URL}/api/clientes/${cli.id}/limite`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limiteCredito: valor }),
+      });
+
+      if (respuesta.ok) {
         recargarClientes();
       } else {
         const datos = await respuesta.json();
@@ -901,7 +946,7 @@ const VistaClientes = ({
       {mostrarFormulario && (
         <div className="bg-white p-6 rounded-xl shadow-sm mb-6 border-t-4 border-blue-600">
           <h3 className="text-lg font-bold mb-4 text-slate-800">Registrar Nuevo Cliente</h3>
-          <form onSubmit={manejarGuardarCliente} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <form onSubmit={manejarGuardarCliente} className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Razón Social / Nombre
@@ -936,7 +981,20 @@ const VistaClientes = ({
                 placeholder="Ej. 381-5551234"
               />
             </div>
-            <div className="sm:col-span-3 flex justify-end mt-2">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Límite de Crédito ($)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={limiteCredito}
+                onChange={(e) => setLimiteCredito(e.target.value)}
+                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="0 = sin límite"
+              />
+            </div>
+            <div className="sm:col-span-4 flex justify-end mt-2">
               <button
                 type="submit"
                 className="bg-blue-600 text-white font-bold text-sm py-2.5 px-8 rounded-lg hover:bg-blue-700 transition shadow-xs"
@@ -955,16 +1013,28 @@ const VistaClientes = ({
               <th className="p-3.5">Razón Social</th>
               <th className="p-3.5">CUIT / DNI</th>
               <th className="p-3.5">Contacto</th>
+              <th className="p-3.5 text-right">Límite de Crédito</th>
               <th className="p-3.5 text-right">Saldo Deudor</th>
               <th className="p-3.5 text-center">Cuenta Corriente</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
+            {/* Cartel de carga: solo mientras no llegó ningún cliente */}
+            {cargando && clientes.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-6 text-center text-slate-400">
+                  Cargando clientes...
+                </td>
+              </tr>
+            )}
             {clientes.map((cli) => (
               <tr key={cli.id} className="hover:bg-slate-50">
                 <td className="p-3.5 font-semibold text-slate-800">{cli.razonSocial}</td>
                 <td className="p-3.5 text-slate-600">{cli.documento}</td>
                 <td className="p-3.5 text-slate-600">{cli.contacto || '-'}</td>
+                <td className="p-3.5 text-right text-slate-700 font-semibold">
+                  {cli.limiteCredito > 0 ? `$${cli.limiteCredito.toLocaleString('es-AR')}` : 'Sin límite'}
+                </td>
                 <td className="p-3.5 text-right">
                   <span
                     className={
@@ -982,6 +1052,12 @@ const VistaClientes = ({
                     className="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded-lg hover:bg-indigo-700 transition font-bold"
                   >
                     Ver Movimientos / Pagar
+                  </button>
+                  <button
+                    onClick={() => cambiarLimite(cli)}
+                    className="ml-2 bg-slate-100 text-slate-700 text-xs px-3 py-1.5 rounded-lg hover:bg-slate-200 transition font-bold"
+                  >
+                    Límite
                   </button>
                 </td>
               </tr>
@@ -1111,6 +1187,8 @@ const VistaClientes = ({
 // VISTA 4: PANTALLA DE USUARIOS DEL SISTEMA (con botones Editar y Eliminar)
 const VistaUsuarios = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  // Empieza en true: se apaga cuando termina el primer pedido al servidor
+  const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   // Guarda el id del usuario que se está editando (null = se está creando uno nuevo)
   const [usuarioEditando, setUsuarioEditando] = useState<number | null>(null);
@@ -1132,6 +1210,8 @@ const VistaUsuarios = () => {
         if (Array.isArray(datos)) setUsuarios(datos);
       } catch {
         console.error('Error al obtener usuarios');
+      } finally {
+        setCargando(false);
       }
     };
     obtenerUsuarios();
@@ -1188,6 +1268,30 @@ const VistaUsuarios = () => {
       } else {
         const datos = await respuesta.json();
         alert(`Error: ${datos.error}`);
+      }
+    } catch {
+      alert('Error de conexión con el servidor.');
+    }
+  };
+
+  // Activa o desactiva un usuario SIN borrarlo (un usuario desactivado no puede iniciar sesión)
+  const cambiarEstado = async (user: Usuario) => {
+    const nuevoEstado = !user.activo; // si estaba activo lo desactiva, y al revés
+    const accion = nuevoEstado ? 'activar' : 'desactivar';
+    if (!window.confirm(`¿Querés ${accion} a ${user.nombre}?`)) return;
+
+    try {
+      const respuesta = await apiFetch(`${API_URL}/api/usuarios/${user.id}/activo`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: nuevoEstado }),
+      });
+
+      if (respuesta.ok) {
+        cargarUsuarios(); // vuelve a pedir la lista para ver el nuevo estado
+      } else {
+        const datos = await respuesta.json();
+        alert(`Error: ${datos.error}`); // ej.: "No podés desactivarte a vos mismo."
       }
     } catch {
       alert('Error de conexión con el servidor.');
@@ -1305,10 +1409,18 @@ const VistaUsuarios = () => {
               <th className="p-3.5">Nombre</th>
               <th className="p-3.5">Email</th>
               <th className="p-3.5">Rol</th>
+              <th className="p-3.5">Estado</th>
               <th className="p-3.5 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
+            {cargando && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-slate-400">
+                  Cargando usuarios...
+                </td>
+              </tr>
+            )}
             {usuarios.map((user) => (
               <tr key={user.id} className="hover:bg-slate-50">
                 <td className="p-3.5 font-semibold text-slate-800">{user.nombre}</td>
@@ -1324,6 +1436,17 @@ const VistaUsuarios = () => {
                     {user.rol.toUpperCase()}
                   </span>
                 </td>
+                <td className="p-3.5">
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                      user.activo === false
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {user.activo === false ? 'INACTIVO' : 'ACTIVO'}
+                  </span>
+                </td>
                 <td className="p-3.5 text-right space-x-2">
                   <button
                     type="button"
@@ -1331,6 +1454,13 @@ const VistaUsuarios = () => {
                     className="bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg transition"
                   >
                     Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => cambiarEstado(user)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3 py-1.5 rounded-lg transition"
+                  >
+                    {user.activo === false ? 'Activar' : 'Desactivar'}
                   </button>
                   <button
                     type="button"
@@ -1359,6 +1489,8 @@ const VistaHistorial = ({
   recargarClientes: () => void;
 }) => {
   const [ventas, setVentas] = useState<VentaHistorial[]>([]);
+  // Empieza en true: se apaga cuando termina el primer pedido al servidor
+  const [cargando, setCargando] = useState(true);
 
   // Al cambiar este número, el efecto vuelve a pedir la lista de ventas
   const [recarga, setRecarga] = useState(0);
@@ -1372,6 +1504,8 @@ const VistaHistorial = ({
         if (Array.isArray(datos)) setVentas(datos);
       } catch {
         console.error('Error al obtener ventas');
+      } finally {
+        setCargando(false);
       }
     };
     obtenerVentas();
@@ -1437,7 +1571,13 @@ const VistaHistorial = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {ventas.length === 0 ? (
+            {cargando ? (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-slate-400">
+                  Cargando ventas...
+                </td>
+              </tr>
+            ) : ventas.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-6 text-center text-slate-400">
                   Todavía no hay ventas registradas.
@@ -1499,28 +1639,85 @@ function App() {
   const esAdmin = rolUsuario === 'admin';
   const [productos, setProductos] = useState<Producto[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  // Indican si todavía se está esperando la respuesta del servidor (para mostrar "Cargando...")
+  const [cargandoProductos, setCargandoProductos] = useState(false);
+  const [cargandoClientes, setCargandoClientes] = useState(false);
+  // true mientras se verifica el token guardado al abrir o recargar la página
+  const [restaurandoSesion, setRestaurandoSesion] = useState(() => !!localStorage.getItem('token'));
 
   const [vistaActual, setVistaActual] = useState('productos');
 
   const obtenerProductos = async () => {
+    setCargandoProductos(true);
     try {
       const respuesta = await apiFetch(`${API_URL}/api/productos`);
       const datos = await respuesta.json();
       if (Array.isArray(datos)) setProductos(datos);
     } catch (error) {
       console.error('Error al cargar productos:', error);
+    } finally {
+      setCargandoProductos(false); // pase lo que pase, se apaga el cartel
     }
   };
 
   const obtenerClientes = async () => {
+    setCargandoClientes(true);
     try {
       const respuesta = await apiFetch(`${API_URL}/api/clientes`);
       const datos = await respuesta.json();
       if (Array.isArray(datos)) setClientes(datos);
     } catch (error) {
       console.error('Error al cargar clientes:', error);
+    } finally {
+      setCargandoClientes(false);
     }
   };
+
+  // Cambia de pantalla y la guarda en el navegador, así al recargar (F5) vuelve a la misma sección
+  const cambiarVista = (vista: string) => {
+    setVistaActual(vista);
+    localStorage.setItem('vista', vista);
+  };
+
+  // AL ABRIR O RECARGAR LA PÁGINA (F5): si hay un token guardado, se le pregunta al servidor
+  // quién es y se vuelve a entrar solo, sin pedir la contraseña otra vez.
+  useEffect(() => {
+    const restaurarSesion = async () => {
+      if (!localStorage.getItem('token')) return; // no hay sesión guardada: se muestra el login
+
+      try {
+        const respuesta = await apiFetch(`${API_URL}/api/me`);
+
+        if (!respuesta.ok) {
+          // Token vencido (dura 2 horas) o usuario desactivado/eliminado: se descarta
+          localStorage.removeItem('token');
+          return;
+        }
+
+        const datos = await respuesta.json();
+        setNombreUsuario(datos.usuario.nombre);
+        setRolUsuario(datos.usuario.rol);
+        // Vuelve a la sección donde estaba, pero solo si su rol puede verla
+        const esAdminRestaurado = datos.usuario.rol === 'admin';
+        const permitidas = esAdminRestaurado
+          ? ['ventas', 'productos', 'clientes', 'historial', 'usuarios']
+          : ['ventas'];
+        const guardada = localStorage.getItem('vista') || '';
+        setVistaActual(
+          permitidas.includes(guardada) ? guardada : esAdminRestaurado ? 'productos' : 'ventas'
+        );
+        setEstaLogueado(true);
+        obtenerProductos();
+        obtenerClientes();
+      } catch {
+        console.error('No se pudo restaurar la sesión.');
+      } finally {
+        setRestaurandoSesion(false); // pase lo que pase, se apaga la pantalla de carga
+      }
+    };
+    restaurarSesion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Inicia sesión con el email y la contraseña recibidos (lo usan el formulario y los botones demo)
   const iniciarSesion = async (emailIngresado: string, passwordIngresada: string) => {
@@ -1539,7 +1736,7 @@ function App() {
         localStorage.setItem('token', datos.token);
         setNombreUsuario(datos.usuario.nombre);
         setRolUsuario(datos.usuario.rol);
-        setVistaActual(datos.usuario.rol === 'admin' ? 'productos' : 'ventas');
+        cambiarVista(datos.usuario.rol === 'admin' ? 'productos' : 'ventas');
         setEstaLogueado(true);
         obtenerProductos();
         obtenerClientes();
@@ -1565,6 +1762,7 @@ function App() {
     setEstaLogueado(false);
     setRolUsuario('');
     setVistaActual('productos');
+    localStorage.removeItem('vista'); // la próxima sesión arranca en la sección por defecto
     setEmail('');
     setPassword('');
     setMensaje('');
@@ -1605,6 +1803,21 @@ function App() {
     .toUpperCase()
     .slice(0, 2);
 
+  // PANTALLA DE CARGA: se muestra mientras se verifica el token guardado
+  if (restaurandoSesion) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <svg className="animate-spin h-10 w-10 text-blue-600" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <p className="text-sm font-bold text-slate-500">Cargando...</p>
+        </div>
+      </div>
+    );
+  }
+
   // --------------------------------------------------------------------------
   // RENDERIZADO CONDICIONAL: PANEL PRINCIPAL (TOP NAVBAR + HERO BANNER)
   // --------------------------------------------------------------------------
@@ -1631,7 +1844,7 @@ function App() {
             <div className="flex items-center gap-1.5 overflow-x-auto py-1">
               {/* Ventas / Caja: lo ven todos los usuarios */}
               <button
-                onClick={() => setVistaActual('ventas')}
+                onClick={() => cambiarVista('ventas')}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
                   vistaActual === 'ventas'
                     ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
@@ -1647,7 +1860,7 @@ function App() {
               {/* Productos y Stock: solo administradores */}
               {esAdmin && (
                 <button
-                  onClick={() => setVistaActual('productos')}
+                  onClick={() => cambiarVista('productos')}
                   className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
                     vistaActual === 'productos'
                       ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
@@ -1675,7 +1888,7 @@ function App() {
               {/* Clientes y Cuentas: solo administradores */}
               {esAdmin && (
                 <button
-                  onClick={() => setVistaActual('clientes')}
+                  onClick={() => cambiarVista('clientes')}
                   className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
                     vistaActual === 'clientes'
                       ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
@@ -1692,7 +1905,7 @@ function App() {
               {/* Historial de ventas: solo administradores */}
               {esAdmin && (
                 <button
-                  onClick={() => setVistaActual('historial')}
+                  onClick={() => cambiarVista('historial')}
                   className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
                     vistaActual === 'historial'
                       ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
@@ -1709,7 +1922,7 @@ function App() {
               {/* Usuarios: solo administradores */}
               {esAdmin && (
                 <button
-                  onClick={() => setVistaActual('usuarios')}
+                  onClick={() => cambiarVista('usuarios')}
                   className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
                     vistaActual === 'usuarios'
                       ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
@@ -1774,7 +1987,7 @@ function App() {
 
               {esAdmin && vistaActual !== 'ventas' && (
                 <button
-                  onClick={() => setVistaActual('ventas')}
+                  onClick={() => cambiarVista('ventas')}
                   className="bg-white text-blue-900 hover:bg-blue-50 text-xs font-black px-4 py-2 rounded-lg shadow-md transition"
                 >
                   + Nueva Venta
@@ -1861,11 +2074,19 @@ function App() {
           )}
 
           {esAdmin && vistaActual === 'productos' && (
-            <VistaProductos productos={productos} recargarProductos={obtenerProductos} />
+            <VistaProductos
+              productos={productos}
+              recargarProductos={obtenerProductos}
+              cargando={cargandoProductos}
+            />
           )}
 
           {esAdmin && vistaActual === 'clientes' && (
-            <VistaClientes clientes={clientes} recargarClientes={obtenerClientes} />
+            <VistaClientes
+              clientes={clientes}
+              recargarClientes={obtenerClientes}
+              cargando={cargandoClientes}
+            />
           )}
 
           {esAdmin && vistaActual === 'historial' && (

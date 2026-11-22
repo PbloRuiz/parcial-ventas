@@ -131,6 +131,19 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// SESIÓN: devuelve nombre y rol del usuario del token (para recuperar la sesión al recargar)
+app.get("/api/me", requiereLogin, async (req, res) => {
+  try {
+    const [u] = await db
+      .select({ nombre: usuarios.nombre, rol: usuarios.rol })
+      .from(usuarios)
+      .where(eq(usuarios.id, res.locals.usuario.id));
+    res.json({ usuario: u });
+  } catch (error) {
+    responderError(res, error, "Error al consultar la sesión.");
+  }
+});
+
 // PRODUCTOS -----------------------------------------------------------------
 
 app.get("/api/productos", requiereLogin, async (req, res) => {
@@ -207,9 +220,11 @@ try {
 
     // TODO o NADA: si algo falla adentro, la base deshace todos los pasos (rollback).
     const resultado = await db.transaction(async (tx) => {
-      if (clienteId) {
+      let limiteCredito = 0;  //0 = sin límite (también vale para Consumidor Final)
+     if (clienteId) {
         const [cli] = await tx.select().from(clientes).where(eq(clientes.id, Number(clienteId)));
-        if (!cli || !cli.activo) throw new ErrorNegocio(400, "El cliente seleccionado no existe.");
+       if (!cli || !cli.activo) throw new ErrorNegocio(400, "El cliente seleccionado no existe.");
+       limiteCredito = cli.limiteCredito;
       }
 
       // Número de factura: se asigna acá, ya adentro de la transacción, y es
@@ -248,6 +263,28 @@ try {
         renglones.push({ prod, cantidad, subtotal });
       }
       total = Math.round(total * 100) / 100;
+
+      // LÍMITE DE CRÉDITO: solo aplica a ventas en cuenta corriente de clientes con límite.
+      // Si se supera, el error hace que la transacción se DESHAGA sola (el stock que ya
+     // se había descontado vuelve atrás.
+      if (formaPago === "cuenta_corriente" && limiteCredito > 0) {
+         //Deuda actual = suma de cargos - suma de abonos (mismo cálculo que en los pagos)
+        const [fila] = await tx
+          .select({
+            saldo: sql<number>`coalesce(sum(case when ${movimientosCtaCte.tipo} = 'cargo' then ${movimientosCtaCte.importe} else -${movimientosCtaCte.importe} end), 0)`,
+          })          .from(movimientosCtaCte)
+          .where(eq(movimientosCtaCte.clienteId, Number(clienteId)));
+        const deudaActual = Number(fila.saldo);
+
+        // 0.005 = tolerancia por los decimales
+       if (deudaActual + total > limiteCredito + 0.005) {
+          throw new ErrorNegocio(
+            400,
+            `La venta supera el límite de crédito del cliente ($${limiteCredito}). ` +
+              `Deuda actual: $${deudaActual}. Esta venta: $${total}.`
+          );
+        } 
+      }
 
       // PASO 2: cabecera de la venta
       const [venta] = await tx
@@ -473,7 +510,7 @@ app.put("/api/usuarios/:id", requiereLogin, soloAdmin, async (req, res) => {
 });
 
 // ELIMINAR un usuario (solo admin).
-// Las ventas no guardan el usuario que las hizo, así que se puede borrar sin romper nada.
+// Las ventas no guardan el usuario que las hizo, se puede borrar sin romper algo.
 // Si el usuario tenía la sesión abierta, pierde el acceso en el siguiente pedido
 // (requiereLogin ya no lo encuentra en la base).
 app.delete("/api/usuarios/:id", requiereLogin, soloAdmin, async (req, res) => {
@@ -511,19 +548,45 @@ app.get("/api/clientes", requiereLogin, soloAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/clientes", requiereLogin, soloAdmin, async (req, res) => {
+  app.post("/api/clientes", requiereLogin, soloAdmin, async (req, res) => {
   try {
     const { razonSocial, documento, contacto } = req.body;
+    // Si no mandan límite, queda en 0 (= sin límite)
+    const limiteCredito = Number(req.body.limiteCredito ?? 0);
+
     if (!razonSocial || !documento) {
       return res.status(400).json({ error: "Razón social y documento son obligatorios." });
     }
-    await db.insert(clientes).values({ razonSocial, documento, contacto });
+    if (!(limiteCredito >= 0)) {
+      return res.status(400).json({ error: "El límite de crédito debe ser un número mayor o igual a 0." });
+    }
+
+    await db.insert(clientes).values({ razonSocial, documento, contacto, limiteCredito });
     res.json({ mensaje: "Cliente registrado exitosamente." });
   } catch (error) {
     if (esDuplicado(error)) {
       return res.status(409).json({ error: "Ya existe un cliente con ese documento." });
     }
     responderError(res, error, "Error al registrar cliente.");
+  }
+});
+  //cambia el limite de un cliente que ya existe 
+  app.put("/api/clientes/:id/limite", requiereLogin, soloAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const limiteCredito = Number(req.body.limiteCredito);
+
+    if (!(limiteCredito >= 0)) {
+      throw new ErrorNegocio(400, "El límite de crédito debe ser un número mayor o igual a 0.");
+    }
+
+    const [cli] = await db.select().from(clientes).where(eq(clientes.id, id));
+    if (!cli) throw new ErrorNegocio(404, "El cliente no existe.");
+
+    await db.update(clientes).set({ limiteCredito }).where(eq(clientes.id, id));
+    res.json({ mensaje: "Límite de crédito actualizado." });
+  } catch (error) {
+    responderError(res, error, "Error al actualizar el límite de crédito.");
   }
 });
 

@@ -18,6 +18,7 @@ export const clientes = sqliteTable("clientes", {
   documento: text("documento").notNull().unique(),
   contacto: text("contacto"),
   activo: integer("activo", { mode: "boolean" }).notNull().default(true),
+  limiteCredito: real("limite_credito").notNull().default(0),
 });
 
 //PRODUCTOS Y STOCK
