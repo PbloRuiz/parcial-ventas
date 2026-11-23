@@ -81,6 +81,18 @@ interface Usuario {
   activo?: boolean; // true = puede iniciar sesión, false = desactivado
 }
 
+// Molde de lo que devuelve GET /api/dashboard (resumen del negocio, importes en pesos)
+interface DatosDashboard {
+  ventasHoy: { total: number; cantidad: number };
+  ventasMes: { total: number; cantidad: number; ticketPromedio: number };
+  deuda: { total: number; clientesConSaldo: number };
+  stockMinimo: number;
+  bajoStock: { id: number; codigo: string; nombre: string; stock: number }[];
+  ventasDiarias: { fecha: string; total: number }[]; // fecha en formato AAAA-MM-DD
+  porFormaPago: { formaPago: string; total: number }[];
+  masVendidos: { codigo: string; nombre: string; unidades: number; importe: number }[];
+}
+
 // Molde para cada fila del historial de ventas (cabecera de la factura + nombre del cliente)
 interface VentaHistorial {
   id: number;
@@ -194,11 +206,12 @@ const VistaVentas = ({
       const respuesta = await apiFetch(`${API_URL}/api/ventas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Solo se envía QUÉ se vende (id y cantidad). El precio, los subtotales y el total
+        // los calcula el servidor con los precios reales de la base de datos.
         body: JSON.stringify({
           clienteId: clienteId ? Number(clienteId) : null,
           formaPago,
-          carrito,
-          total: totalVenta,
+          carrito: carrito.map((item) => ({ idProducto: item.idProducto, cantidad: item.cantidad })),
         }),
       });
 
@@ -221,7 +234,8 @@ const VistaVentas = ({
           clienteDocumento: clienteObj ? clienteObj.documento : '99-99999999-9',
           formaPago: etiquetaFormaPago[formaPago] || formaPago.toUpperCase(),
           items: [...carrito],
-          total: totalVenta,
+          // El total oficial es el que calculó el servidor
+          total: typeof datos.total === 'number' ? datos.total : totalVenta,
         };
 
         setFacturaGenerada(nuevaFactura);
@@ -582,10 +596,12 @@ const VistaProductos = ({
   productos,
   recargarProductos,
   cargando,
+  error,
 }: {
   productos: Producto[];
   recargarProductos: () => void;
   cargando: boolean; // true mientras se piden los productos al servidor
+  error: boolean; // true si el pedido falló
 }) => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [productoEditando, setProductoEditando] = useState<number | null>(null);
@@ -761,11 +777,28 @@ const VistaProductos = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {/* Cartel de carga: solo mientras no llegó ningún producto */}
+            {/* Los tres estados de un listado: cargando, con error y vacío */}
             {cargando && productos.length === 0 && (
               <tr>
                 <td colSpan={5} className="p-6 text-center text-slate-400">
                   Cargando productos...
+                </td>
+              </tr>
+            )}
+            {!cargando && error && productos.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-red-600">
+                  No se pudieron cargar los productos.{' '}
+                  <button type="button" onClick={recargarProductos} className="underline font-bold">
+                    Reintentar
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!cargando && !error && productos.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-slate-400">
+                  No hay productos cargados todavía.
                 </td>
               </tr>
             )}
@@ -811,10 +844,12 @@ const VistaClientes = ({
   clientes,
   recargarClientes,
   cargando,
+  error,
 }: {
   clientes: Cliente[];
   recargarClientes: () => void;
   cargando: boolean; // true mientras se piden los clientes al servidor
+  error: boolean; // true si el pedido falló
 }) => {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [razonSocial, setRazonSocial] = useState('');
@@ -1019,11 +1054,27 @@ const VistaClientes = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {/* Cartel de carga: solo mientras no llegó ningún cliente */}
             {cargando && clientes.length === 0 && (
               <tr>
                 <td colSpan={6} className="p-6 text-center text-slate-400">
                   Cargando clientes...
+                </td>
+              </tr>
+            )}
+            {!cargando && error && clientes.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-6 text-center text-red-600">
+                  No se pudieron cargar los clientes.{' '}
+                  <button type="button" onClick={recargarClientes} className="underline font-bold">
+                    Reintentar
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!cargando && !error && clientes.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-6 text-center text-slate-400">
+                  No hay clientes registrados todavía.
                 </td>
               </tr>
             )}
@@ -1189,6 +1240,7 @@ const VistaUsuarios = () => {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   // Empieza en true: se apaga cuando termina el primer pedido al servidor
   const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState(false); // true si el pedido de usuarios falló
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   // Guarda el id del usuario que se está editando (null = se está creando uno nuevo)
   const [usuarioEditando, setUsuarioEditando] = useState<number | null>(null);
@@ -1207,9 +1259,15 @@ const VistaUsuarios = () => {
       try {
         const respuesta = await apiFetch(`${API_URL}/api/usuarios`);
         const datos = await respuesta.json();
-        if (Array.isArray(datos)) setUsuarios(datos);
+        if (respuesta.ok && Array.isArray(datos)) {
+          setUsuarios(datos);
+          setError(false);
+        } else {
+          setError(true);
+        }
       } catch {
         console.error('Error al obtener usuarios');
+        setError(true);
       } finally {
         setCargando(false);
       }
@@ -1421,6 +1479,23 @@ const VistaUsuarios = () => {
                 </td>
               </tr>
             )}
+            {!cargando && error && usuarios.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-red-600">
+                  No se pudieron cargar los usuarios.{' '}
+                  <button type="button" onClick={cargarUsuarios} className="underline font-bold">
+                    Reintentar
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!cargando && !error && usuarios.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-slate-400">
+                  No hay usuarios registrados.
+                </td>
+              </tr>
+            )}
             {usuarios.map((user) => (
               <tr key={user.id} className="hover:bg-slate-50">
                 <td className="p-3.5 font-semibold text-slate-800">{user.nombre}</td>
@@ -1491,6 +1566,7 @@ const VistaHistorial = ({
   const [ventas, setVentas] = useState<VentaHistorial[]>([]);
   // Empieza en true: se apaga cuando termina el primer pedido al servidor
   const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState(false); // true si el pedido de ventas falló
 
   // Al cambiar este número, el efecto vuelve a pedir la lista de ventas
   const [recarga, setRecarga] = useState(0);
@@ -1501,9 +1577,15 @@ const VistaHistorial = ({
       try {
         const respuesta = await apiFetch(`${API_URL}/api/ventas`);
         const datos = await respuesta.json();
-        if (Array.isArray(datos)) setVentas(datos);
+        if (respuesta.ok && Array.isArray(datos)) {
+          setVentas(datos);
+          setError(false);
+        } else {
+          setError(true);
+        }
       } catch {
         console.error('Error al obtener ventas');
+        setError(true);
       } finally {
         setCargando(false);
       }
@@ -1577,6 +1659,15 @@ const VistaHistorial = ({
                   Cargando ventas...
                 </td>
               </tr>
+            ) : error && ventas.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-red-600">
+                  No se pudieron cargar las ventas.{' '}
+                  <button type="button" onClick={cargarVentas} className="underline font-bold">
+                    Reintentar
+                  </button>
+                </td>
+              </tr>
             ) : ventas.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-6 text-center text-slate-400">
@@ -1622,6 +1713,322 @@ const VistaHistorial = ({
 };
 
 
+// Formatos del panel de inicio: $ 1.363.800,00 (completo) y $ 250 mil / $ 1,4 M (para los ejes)
+const pesos = (n: number) =>
+  '$ ' + n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const pesosCorto = (n: number) => {
+  if (n >= 1000000) return `$ ${(n / 1000000).toLocaleString('es-AR', { maximumFractionDigits: 1 })} M`;
+  if (n >= 1000) return `$ ${Math.round(n / 1000).toLocaleString('es-AR')} mil`;
+  return `$ ${Math.round(n)}`;
+};
+
+// "2026-11-22" -> "22/11"
+const etiquetaDia = (fecha: string) => {
+  const [, mes, dia] = fecha.split('-');
+  return `${dia}/${mes}`;
+};
+
+const NOMBRES_PAGO: Record<string, string> = {
+  contado: 'Contado',
+  tarjeta: 'Tarjeta',
+  cuenta_corriente: 'Cuenta corriente',
+};
+const COLORES_PAGO: Record<string, string> = {
+  contado: '#1d4ed8', // azul fuerte
+  tarjeta: '#38bdf8', // celeste
+  cuenta_corriente: '#6366f1', // índigo
+};
+
+// VISTA 0: PANEL DE INICIO (solo administradores): resumen del negocio
+const VistaInicio = ({
+  nombre,
+  irA,
+}: {
+  nombre: string;
+  irA: (vista: string) => void; // cambia de pantalla (para "Nueva venta" y "Ver todos")
+}) => {
+  const [datos, setDatos] = useState<DatosDashboard | null>(null);
+  // Empieza en true: se apaga cuando termina el primer pedido al servidor
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState(false);
+
+  // Al cambiar este número, el efecto vuelve a pedir los datos
+  const [recarga, setRecarga] = useState(0);
+  const recargar = () => setRecarga((n) => n + 1);
+
+  useEffect(() => {
+    const obtenerDatos = async () => {
+      try {
+        const respuesta = await apiFetch(`${API_URL}/api/dashboard`);
+        const json = await respuesta.json();
+        if (respuesta.ok && json && json.ventasHoy) {
+          setDatos(json);
+          setError(false);
+        } else {
+          setError(true);
+        }
+      } catch {
+        console.error('Error al obtener el panel de inicio');
+        setError(true);
+      } finally {
+        setCargando(false);
+      }
+    };
+    obtenerDatos();
+  }, [recarga]);
+
+  const fechaHoy = new Date().toLocaleDateString('es-AR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+
+  const encabezado = (
+    <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white rounded-2xl px-6 py-6 mb-6 flex flex-wrap justify-between items-center gap-4 shadow-md shadow-blue-900/20">
+      <div>
+        <h2 className="text-2xl font-black tracking-tight">Hola, {nombre}</h2>
+        <p className="text-sm text-blue-200 mt-1 capitalize">{fechaHoy}</p>
+      </div>
+      <button
+        onClick={() => irA('ventas')}
+        className="bg-white text-blue-900 hover:bg-blue-50 text-sm font-black px-5 py-2.5 rounded-lg shadow-md transition"
+      >
+        Nueva venta
+      </button>
+    </div>
+  );
+
+  if (cargando) {
+    return (
+      <div>
+        {encabezado}
+        <p className="text-slate-400 text-sm">Cargando panel...</p>
+      </div>
+    );
+  }
+
+  if (error || !datos) {
+    return (
+      <div>
+        {encabezado}
+        <p className="text-red-600 text-sm">
+          No se pudo cargar el panel de inicio.{' '}
+          <button type="button" onClick={recargar} className="underline font-bold">
+            Reintentar
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  // --- Datos para el gráfico de barras (ventas diarias) ---
+  const maximo = Math.max(...datos.ventasDiarias.map((d) => d.total), 1);
+  const marcasEje = [1, 0.75, 0.5, 0.25, 0].map((f) => maximo * f);
+
+  // --- Datos para el gráfico de anillo (forma de pago): cada tramo empieza donde terminó el anterior ---
+  const totalPago = datos.porFormaPago.reduce((acc, p) => acc + p.total, 0);
+  const segmentos = datos.porFormaPago
+    .filter((p) => p.total > 0)
+    .reduce<{ formaPago: string; total: number; pct: number; desde: number }[]>((lista, p) => {
+      const pct = totalPago > 0 ? (p.total / totalPago) * 100 : 0;
+      const ultimo = lista[lista.length - 1];
+      const desde = ultimo ? ultimo.desde + ultimo.pct : 0;
+      return [...lista, { formaPago: p.formaPago, total: p.total, pct, desde }];
+    }, []);
+
+  return (
+    <div>
+      {encabezado}
+
+      {/* TARJETAS DE RESUMEN */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white p-5 rounded-xl border border-slate-200/80 border-t-4 border-t-blue-600 shadow-sm">
+          <p className="text-sm text-slate-500">Ventas de hoy</p>
+          <p className="text-2xl font-black text-blue-900 mt-1">{pesos(datos.ventasHoy.total)}</p>
+          <p className="text-xs text-slate-500 mt-1">{datos.ventasHoy.cantidad} facturas</p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-slate-200/80 border-t-4 border-t-indigo-600 shadow-sm">
+          <p className="text-sm text-slate-500">Ventas del mes</p>
+          <p className="text-2xl font-black text-blue-900 mt-1">{pesos(datos.ventasMes.total)}</p>
+          <p className="text-xs text-slate-500 mt-1">
+            {datos.ventasMes.cantidad} facturas · ticket promedio {pesos(datos.ventasMes.ticketPromedio)}
+          </p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-slate-200/80 border-t-4 border-t-sky-500 shadow-sm">
+          <p className="text-sm text-slate-500">Deuda en cuentas corrientes</p>
+          <p className="text-2xl font-black text-blue-900 mt-1">{pesos(datos.deuda.total)}</p>
+          <p className="text-xs text-slate-500 mt-1">{datos.deuda.clientesConSaldo} clientes con saldo</p>
+        </div>
+        <div className="bg-blue-50 p-5 rounded-xl border border-blue-200 border-t-4 border-t-blue-900 shadow-sm">
+          <p className="text-sm text-slate-600">Bajo stock mínimo</p>
+          <p className="text-2xl font-black text-blue-900 mt-1">{datos.bajoStock.length}</p>
+          <p className="text-xs text-slate-500 mt-1">Productos para reponer</p>
+        </div>
+      </div>
+
+      {/* GRÁFICOS: ventas diarias y forma de pago */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+          <h3 className="text-lg font-bold text-slate-900">Ventas diarias</h3>
+          <p className="text-sm text-slate-500 mb-5">Últimos 30 días</p>
+          <div className="flex">
+            <div className="flex flex-col justify-between h-48 pr-3 text-[11px] text-slate-400 text-right shrink-0">
+              {marcasEje.map((m, i) => (
+                <span key={i}>{pesosCorto(m)}</span>
+              ))}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-end gap-1 h-48 border-b border-l border-slate-200">
+                {datos.ventasDiarias.map((d) => (
+                  <div
+                    key={d.fecha}
+                    className="flex-1 h-full flex items-end"
+                    title={`${etiquetaDia(d.fecha)}: ${pesos(d.total)}`}
+                  >
+                    <div
+                      className="w-full bg-blue-300 hover:bg-blue-600 rounded-t transition-colors"
+                      style={{ height: `${(d.total / maximo) * 100}%` }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-1 mt-1 text-[11px] text-slate-400">
+                {datos.ventasDiarias.map((d, i) => (
+                  <div key={d.fecha} className="flex-1 text-center whitespace-nowrap">
+                    {i % 5 === 0 ? etiquetaDia(d.fecha) : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+          <h3 className="text-lg font-bold text-slate-900">Por forma de pago</h3>
+          <p className="text-sm text-slate-500 mb-4 capitalize">
+            {new Date().toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
+          </p>
+          <div className="relative w-44 h-44 mx-auto mb-5">
+            <svg viewBox="0 0 42 42" className="absolute inset-0 w-full h-full -rotate-90">
+              <circle cx="21" cy="21" r="15.915" fill="none" stroke="#dbeafe" strokeWidth="6" />
+              {segmentos.map((seg) => (
+                <circle
+                  key={seg.formaPago}
+                  cx="21"
+                  cy="21"
+                  r="15.915"
+                  fill="none"
+                  stroke={COLORES_PAGO[seg.formaPago] || '#94a3b8'}
+                  strokeWidth="6"
+                  strokeDasharray={`${seg.pct} ${100 - seg.pct}`}
+                  strokeDashoffset={-seg.desde}
+                />
+              ))}
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-xs text-slate-500">Total</span>
+              <span className="text-lg font-black text-blue-900">{pesosCorto(totalPago)}</span>
+            </div>
+          </div>
+          <div className="space-y-2 text-sm">
+            {segmentos.length === 0 && (
+              <p className="text-slate-400 text-center">Todavía no hay ventas este mes.</p>
+            )}
+            {segmentos.map((seg) => (
+              <div key={seg.formaPago} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 text-slate-700">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: COLORES_PAGO[seg.formaPago] || '#94a3b8' }}
+                  ></span>
+                  {NOMBRES_PAGO[seg.formaPago] || seg.formaPago}
+                </span>
+                <span className="text-slate-400">{Math.round(seg.pct)}%</span>
+                <span className="font-semibold text-slate-800">{pesos(seg.total)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* MÁS VENDIDOS Y PARA REPONER */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+          <h3 className="text-lg font-bold text-slate-900">Más vendidos del mes</h3>
+          <p className="text-sm text-slate-500 mb-4">Por unidades</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr className="bg-blue-50 text-blue-900 text-sm">
+                  <th className="p-3">#</th>
+                  <th className="p-3">Producto</th>
+                  <th className="p-3 text-right">Unidades</th>
+                  <th className="p-3 text-right">Importe</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {datos.masVendidos.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="p-6 text-center text-slate-400">
+                      Todavía no hay ventas este mes.
+                    </td>
+                  </tr>
+                )}
+                {datos.masVendidos.map((p, i) => (
+                  <tr key={p.codigo + i}>
+                    <td className="p-3 text-blue-400 font-bold">{i + 1}</td>
+                    <td className="p-3">
+                      <p className="font-medium text-slate-800">{p.nombre}</p>
+                      <p className="text-xs font-mono text-slate-400">{p.codigo}</p>
+                    </td>
+                    <td className="p-3 text-right text-slate-700">{p.unidades}</td>
+                    <td className="p-3 text-right font-semibold text-slate-800">{pesos(p.importe)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+          <div className="flex justify-between items-start">
+            <h3 className="text-lg font-bold text-slate-900">Para reponer</h3>
+            <button
+              type="button"
+              onClick={() => irA('productos')}
+              className="text-sm font-bold text-blue-600 hover:text-blue-800"
+            >
+              Ver todos →
+            </button>
+          </div>
+          <p className="text-sm text-slate-500 mb-4">Productos bajo el stock mínimo</p>
+          <div className="space-y-4">
+            {datos.bajoStock.length === 0 && (
+              <p className="text-sm text-slate-400">No hay productos para reponer.</p>
+            )}
+            {datos.bajoStock.slice(0, 6).map((p) => (
+              <div key={p.id} className="flex justify-between items-start gap-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-800">{p.nombre}</p>
+                  <p className="text-xs font-mono text-slate-400">{p.codigo}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="inline-block bg-red-100 text-red-700 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                    {p.stock} · bajo mínimo
+                  </span>
+                  <p className="text-xs text-slate-400 mt-1">mínimo {datos.stockMinimo}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 // ============================================================================
 // 3. COMPONENTE PRINCIPAL (CEREBRO Y NAVEGACIÓN DE LA APLICACIÓN)
 // ============================================================================
@@ -1642,19 +2049,27 @@ function App() {
   // Indican si todavía se está esperando la respuesta del servidor (para mostrar "Cargando...")
   const [cargandoProductos, setCargandoProductos] = useState(false);
   const [cargandoClientes, setCargandoClientes] = useState(false);
+  const [errorProductos, setErrorProductos] = useState(false); // true si falló el pedido de productos
+  const [errorClientes, setErrorClientes] = useState(false); // true si falló el pedido de clientes
   // true mientras se verifica el token guardado al abrir o recargar la página
   const [restaurandoSesion, setRestaurandoSesion] = useState(() => !!localStorage.getItem('token'));
 
-  const [vistaActual, setVistaActual] = useState('productos');
+  const [vistaActual, setVistaActual] = useState('inicio');
 
   const obtenerProductos = async () => {
     setCargandoProductos(true);
     try {
       const respuesta = await apiFetch(`${API_URL}/api/productos`);
       const datos = await respuesta.json();
-      if (Array.isArray(datos)) setProductos(datos);
+      if (respuesta.ok && Array.isArray(datos)) {
+        setProductos(datos);
+        setErrorProductos(false);
+      } else {
+        setErrorProductos(true);
+      }
     } catch (error) {
       console.error('Error al cargar productos:', error);
+      setErrorProductos(true);
     } finally {
       setCargandoProductos(false); // pase lo que pase, se apaga el cartel
     }
@@ -1665,9 +2080,15 @@ function App() {
     try {
       const respuesta = await apiFetch(`${API_URL}/api/clientes`);
       const datos = await respuesta.json();
-      if (Array.isArray(datos)) setClientes(datos);
+      if (respuesta.ok && Array.isArray(datos)) {
+        setClientes(datos);
+        setErrorClientes(false);
+      } else {
+        setErrorClientes(true);
+      }
     } catch (error) {
       console.error('Error al cargar clientes:', error);
+      setErrorClientes(true);
     } finally {
       setCargandoClientes(false);
     }
@@ -1700,11 +2121,11 @@ function App() {
         // Vuelve a la sección donde estaba, pero solo si su rol puede verla
         const esAdminRestaurado = datos.usuario.rol === 'admin';
         const permitidas = esAdminRestaurado
-          ? ['ventas', 'productos', 'clientes', 'historial', 'usuarios']
+          ? ['inicio', 'ventas', 'productos', 'clientes', 'historial', 'usuarios']
           : ['ventas'];
         const guardada = localStorage.getItem('vista') || '';
         setVistaActual(
-          permitidas.includes(guardada) ? guardada : esAdminRestaurado ? 'productos' : 'ventas'
+          permitidas.includes(guardada) ? guardada : esAdminRestaurado ? 'inicio' : 'ventas'
         );
         setEstaLogueado(true);
         obtenerProductos();
@@ -1716,7 +2137,7 @@ function App() {
       }
     };
     restaurarSesion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   // Inicia sesión con el email y la contraseña recibidos (lo usan el formulario y los botones demo)
@@ -1736,7 +2157,7 @@ function App() {
         localStorage.setItem('token', datos.token);
         setNombreUsuario(datos.usuario.nombre);
         setRolUsuario(datos.usuario.rol);
-        cambiarVista(datos.usuario.rol === 'admin' ? 'productos' : 'ventas');
+        cambiarVista(datos.usuario.rol === 'admin' ? 'inicio' : 'ventas');
         setEstaLogueado(true);
         obtenerProductos();
         obtenerClientes();
@@ -1761,7 +2182,7 @@ function App() {
     localStorage.removeItem('token');
     setEstaLogueado(false);
     setRolUsuario('');
-    setVistaActual('productos');
+    setVistaActual('inicio');
     localStorage.removeItem('vista'); // la próxima sesión arranca en la sección por defecto
     setEmail('');
     setPassword('');
@@ -1770,10 +2191,13 @@ function App() {
   };
 
   const stockBajoCount = productos.filter((p) => p.stock < 20).length;
-  const totalPorCobrar = clientes.reduce((acc, c) => acc + c.saldo, 0);
-  const clientesConDeuda = clientes.filter((c) => c.saldo > 0).length;
 
+  // Título y subtítulo de cada sección (se muestran en la barra superior del contenido)
   const infoSeccion: Record<string, { titulo: string; subtitulo: string }> = {
+    inicio: {
+      titulo: 'Inicio',
+      subtitulo: 'Resumen de ventas, deudas y stock del negocio',
+    },
     ventas: {
       titulo: 'Punto de Venta',
       subtitulo: 'Facturación rápida, control de stock en vivo y ventas en cuenta corriente',
@@ -1803,6 +2227,46 @@ function App() {
     .toUpperCase()
     .slice(0, 2);
 
+  // Opciones del MENÚ LATERAL. El vendedor solo ve las que no son "soloAdmin" (Ventas / Caja).
+  const opcionesMenu = [
+    {
+      clave: 'inicio',
+      texto: 'Inicio',
+      soloAdmin: true,
+      icono: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    },
+    {
+      clave: 'ventas',
+      texto: 'Ventas / Caja',
+      soloAdmin: false,
+      icono: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z',
+    },
+    {
+      clave: 'productos',
+      texto: 'Productos y Stock',
+      soloAdmin: true,
+      icono: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+    },
+    {
+      clave: 'clientes',
+      texto: 'Clientes y Cuentas',
+      soloAdmin: true,
+      icono: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z',
+    },
+    {
+      clave: 'historial',
+      texto: 'Historial de Ventas',
+      soloAdmin: true,
+      icono: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+    },
+    {
+      clave: 'usuarios',
+      texto: 'Usuarios',
+      soloAdmin: true,
+      icono: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+    },
+  ];
+
   // PANTALLA DE CARGA: se muestra mientras se verifica el token guardado
   if (restaurandoSesion) {
     return (
@@ -1819,61 +2283,45 @@ function App() {
   }
 
   // --------------------------------------------------------------------------
-  // RENDERIZADO CONDICIONAL: PANEL PRINCIPAL (TOP NAVBAR + HERO BANNER)
+  // RENDERIZADO CONDICIONAL: PANEL PRINCIPAL (MENÚ LATERAL + CONTENIDO)
   // --------------------------------------------------------------------------
   if (estaLogueado) {
     return (
-      <div className="min-h-screen bg-slate-100 flex flex-col">
-        {/* BARRA DE NAVEGACIÓN SUPERIOR */}
-        <nav className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-xs">
-          <div className="max-w-7xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-md shadow-blue-600/25">
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-base font-black tracking-tight text-slate-800 leading-none">
-                  Gestión Pro
-                </h1>
-                <p className="text-[11px] text-slate-400 font-medium mt-0.5">Panel Comercial</p>
-              </div>
+      <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row">
+        {/* MENÚ LATERAL: lo comparten todas las pantallas */}
+        <aside className="md:w-64 shrink-0 bg-white border-b md:border-b-0 md:border-r border-slate-200 flex flex-col md:sticky md:top-0 md:h-screen">
+          <div className="px-5 py-5 flex items-center gap-3">
+            <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-md shadow-blue-600/25 shrink-0">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+              </svg>
             </div>
+            <div>
+              <h1 className="text-base font-black tracking-tight text-slate-800 leading-none">Gestión Pro</h1>
+              <p className="text-[11px] text-slate-400 font-medium mt-0.5">Gestión comercial</p>
+            </div>
+          </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto py-1">
-              {/* Ventas / Caja: lo ven todos los usuarios */}
-              <button
-                onClick={() => cambiarVista('ventas')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                  vistaActual === 'ventas'
-                    ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                    : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span>Ventas / Caja</span>
-              </button>
-
-              {/* Productos y Stock: solo administradores */}
-              {esAdmin && (
+          <nav className="flex md:flex-col gap-1 px-3 pb-3 md:pb-0 overflow-x-auto md:overflow-visible">
+            {opcionesMenu
+              .filter((op) => esAdmin || !op.soloAdmin)
+              .map((op) => (
                 <button
-                  onClick={() => cambiarVista('productos')}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                    vistaActual === 'productos'
+                  key={op.clave}
+                  onClick={() => cambiarVista(op.clave)}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm transition-all shrink-0 text-left ${
+                    vistaActual === op.clave
                       ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
                       : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d={op.icono} />
                   </svg>
-                  <span>Productos y Stock</span>
-                  {stockBajoCount > 0 && (
+                  <span>{op.texto}</span>
+                  {op.clave === 'productos' && stockBajoCount > 0 && (
                     <span
-                      className={`text-xs font-black px-1.5 py-0.2 rounded-full ${
+                      className={`ml-auto text-xs font-black px-1.5 rounded-full ${
                         vistaActual === 'productos'
                           ? 'bg-amber-400 text-slate-950'
                           : 'bg-amber-100 text-amber-800'
@@ -1883,62 +2331,22 @@ function App() {
                     </span>
                   )}
                 </button>
-              )}
+              ))}
+          </nav>
+        </aside>
 
-              {/* Clientes y Cuentas: solo administradores */}
-              {esAdmin && (
-                <button
-                  onClick={() => cambiarVista('clientes')}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                    vistaActual === 'clientes'
-                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <span>Clientes y Cuentas</span>
-                </button>
-              )}
-
-              {/* Historial de ventas: solo administradores */}
-              {esAdmin && (
-                <button
-                  onClick={() => cambiarVista('historial')}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                    vistaActual === 'historial'
-                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <span>Historial de Ventas</span>
-                </button>
-              )}
-
-              {/* Usuarios: solo administradores */}
-              {esAdmin && (
-                <button
-                  onClick={() => cambiarVista('usuarios')}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm transition-all shrink-0 ${
-                    vistaActual === 'usuarios'
-                      ? 'bg-blue-600 text-white font-bold shadow-sm shadow-blue-600/30'
-                      : 'text-slate-600 font-medium hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                  <span>Usuarios</span>
-                </button>
-              )}
+        {/* CONTENIDO: barra superior con el usuario + la pantalla elegida */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <header className="bg-white border-b border-slate-200 px-4 sm:px-8 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-base font-black text-slate-800 truncate">
+                {infoSeccion[vistaActual]?.titulo}
+              </h2>
+              <p className="text-xs text-slate-500 truncate">{infoSeccion[vistaActual]?.subtitulo}</p>
             </div>
 
             <div className="flex items-center gap-3 shrink-0">
-              <div className="hidden md:flex items-center gap-2.5 pr-3 border-r border-slate-200">
+              <div className="hidden sm:flex items-center gap-2.5 pr-3 border-r border-slate-200">
                 <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
                   {inicialesUsuario || 'OP'}
                 </div>
@@ -1946,7 +2354,7 @@ function App() {
                   <p className="text-xs font-bold text-slate-800">{nombreUsuario}</p>
                   <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    En línea
+                    {esAdmin ? 'Administrador' : 'Vendedor'}
                   </p>
                 </div>
               </div>
@@ -1958,143 +2366,50 @@ function App() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
-                <span>Cerrar Sesión</span>
+                <span>Salir</span>
               </button>
             </div>
-          </div>
-        </nav>
+          </header>
 
-        {/* ENCABEZADO AZUL DEGRADADO (HERO BANNER) */}
-        <header className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white pt-8 pb-20 px-4 sm:px-8">
-          <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
-                {infoSeccion[vistaActual]?.titulo}
-              </h2>
-              <p className="text-sm text-blue-200 mt-1">
-                {infoSeccion[vistaActual]?.subtitulo}
-              </p>
-            </div>
+          <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-8">
+            {esAdmin && vistaActual === 'inicio' && (
+              <VistaInicio nombre={nombreUsuario} irA={cambiarVista} />
+            )}
 
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-blue-100 bg-white/10 border border-white/15 px-3.5 py-2 rounded-lg backdrop-blur-xs capitalize">
-                {new Date().toLocaleDateString('es-AR', {
-                  weekday: 'long',
-                  day: 'numeric',
-                  month: 'long',
-                })}
-              </span>
+            {vistaActual === 'ventas' && (
+              <VistaVentas
+                productos={productos}
+                clientes={clientes}
+                recargarProductos={obtenerProductos}
+                recargarClientes={obtenerClientes}
+              />
+            )}
 
-              {esAdmin && vistaActual !== 'ventas' && (
-                <button
-                  onClick={() => cambiarVista('ventas')}
-                  className="bg-white text-blue-900 hover:bg-blue-50 text-xs font-black px-4 py-2 rounded-lg shadow-md transition"
-                >
-                  + Nueva Venta
-                </button>
-              )}
-            </div>
-          </div>
-        </header>
+            {esAdmin && vistaActual === 'productos' && (
+              <VistaProductos
+                productos={productos}
+                recargarProductos={obtenerProductos}
+                cargando={cargandoProductos}
+                error={errorProductos}
+              />
+            )}
 
-        {/* CONTENIDO PRINCIPAL CON TARJETAS KPI FLOTANTES */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 -mt-12 pb-12">
-          {esAdmin && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-            <div className="bg-white p-5 rounded-xl shadow-md shadow-slate-900/5 border border-slate-200/80 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Artículos en Catálogo
-                </p>
-                <p className="text-2xl font-black text-slate-800 mt-1">
-                  {productos.length} <span className="text-sm font-medium text-slate-500">prod.</span>
-                </p>
-                <p className={`text-xs mt-1 font-semibold ${stockBajoCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                  {stockBajoCount > 0
-                    ? `${stockBajoCount} con stock bajo (< 20 un.)`
-                    : 'Niveles de stock óptimos'}
-                </p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-            </div>
+            {esAdmin && vistaActual === 'clientes' && (
+              <VistaClientes
+                clientes={clientes}
+                recargarClientes={obtenerClientes}
+                cargando={cargandoClientes}
+                error={errorClientes}
+              />
+            )}
 
-            <div className="bg-white p-5 rounded-xl shadow-md shadow-slate-900/5 border border-slate-200/80 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Clientes Registrados
-                </p>
-                <p className="text-2xl font-black text-slate-800 mt-1">
-                  {clientes.length} <span className="text-sm font-medium text-slate-500">activos</span>
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {clientesConDeuda === 0
-                    ? 'Sin saldos pendientes'
-                    : `${clientesConDeuda} con cuenta corriente activa`}
-                </p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-            </div>
+            {esAdmin && vistaActual === 'historial' && (
+              <VistaHistorial recargarProductos={obtenerProductos} recargarClientes={obtenerClientes} />
+            )}
 
-            <div className="bg-white p-5 rounded-xl shadow-md shadow-slate-900/5 border border-slate-200/80 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Total a Cobrar (Cta. Cte.)
-                </p>
-                <p className={`text-2xl font-black mt-1 ${totalPorCobrar > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  ${totalPorCobrar.toLocaleString('es-AR')}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Saldo consolidado de clientes
-                </p>
-              </div>
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${totalPorCobrar > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-          )}
-
-          {vistaActual === 'ventas' && (
-            <VistaVentas
-              productos={productos}
-              clientes={clientes}
-              recargarProductos={obtenerProductos}
-              recargarClientes={obtenerClientes}
-            />
-          )}
-
-          {esAdmin && vistaActual === 'productos' && (
-            <VistaProductos
-              productos={productos}
-              recargarProductos={obtenerProductos}
-              cargando={cargandoProductos}
-            />
-          )}
-
-          {esAdmin && vistaActual === 'clientes' && (
-            <VistaClientes
-              clientes={clientes}
-              recargarClientes={obtenerClientes}
-              cargando={cargandoClientes}
-            />
-          )}
-
-          {esAdmin && vistaActual === 'historial' && (
-            <VistaHistorial recargarProductos={obtenerProductos} recargarClientes={obtenerClientes} />
-          )}
-
-          {esAdmin && vistaActual === 'usuarios' && <VistaUsuarios />}
-        </main>
+            {esAdmin && vistaActual === 'usuarios' && <VistaUsuarios />}
+          </main>
+        </div>
       </div>
     );
   }
