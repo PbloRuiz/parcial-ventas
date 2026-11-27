@@ -2137,7 +2137,7 @@ function App() {
       }
     };
     restaurarSesion();
-    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Inicia sesión con el email y la contraseña recibidos (lo usan el formulario y los botones demo)
@@ -2422,6 +2422,13 @@ function App() {
       className="h-screen w-full overflow-hidden bg-cover bg-bottom lg:bg-[length:100%_100%] bg-no-repeat flex items-center justify-center p-4"
       style={{ backgroundImage: "url('/fondoo-login.png')" }}
     >
+      {/* DATOS DEL GRUPO: esquina inferior derecha de la pantalla de ingreso */}
+      <div className="fixed bottom-4 right-4 z-10 bg-white/90 backdrop-blur-xs border border-blue-100 rounded-xl shadow-lg px-4 py-3 text-right">
+        <p className="text-[11px] font-black uppercase tracking-wider text-blue-700">Grupo 17</p>
+        <p className="text-xs text-slate-700 mt-1">Ruiz Pablo Emanuel - 61324</p>
+        <p className="text-xs text-slate-700">Valentín Valdez del Pino - 63209</p>
+      </div>
+
       <div className="bg-white/95 backdrop-blur-xs p-8 sm:p-10 rounded-2xl shadow-[0_20px_50px_rgba(37,99,235,0.18)] w-full max-w-md border border-blue-100">
         <div className="mb-8 text-center">
           <div className="mx-auto w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/30 mb-4">
